@@ -1,6 +1,6 @@
 {
     "model_type": "diffusion_cond",
-    "sample_size": 12582912,
+    "sample_size": 2097152,
     "sample_rate": 44100,
     "audio_channels": 2,
     "model": {
@@ -10,6 +10,7 @@
             "config": {
                 "encoder": {
                     "type": "oobleck",
+                    "requires_grad": false,
                     "config": {
                         "in_channels": 2,
                         "channels": 128,
@@ -43,13 +44,10 @@
             "configs": [
                 {
                     "id": "prompt",
-                    "type": "clap_text",
+                    "type": "t5",
                     "config": {
-                        "audio_model_type": "HTSAT-base",
-                        "enable_fusion": true,
-                        "clap_ckpt_path": "/path/to/clap.ckpt",
-                        "use_text_features": true,
-                        "feature_layer_ix": -2
+                        "t5_model_name": "t5-base",
+                        "max_length": 128
                     }
                 },
                 {
@@ -114,14 +112,16 @@
         "demo": {
             "demo_every": 2000,
             "demo_steps": 250,
-            "num_demos": 4,
+            "num_demos": 5,
             "demo_cond": [
+                {"prompt": "Bach, Prelude, bwv 846, expressive performance", "seconds_start": 0, "seconds_total": 30}, 
                 {"prompt": "A beautiful piano arpeggio", "seconds_start": 0, "seconds_total": 80},
                 {"prompt": "A tropical house track with upbeat melodies, a driving bassline, and cheery vibes", "seconds_start": 0, "seconds_total": 250},
                 {"prompt": "A cool 80s glam rock song with driving drums and distorted guitars", "seconds_start": 0, "seconds_total": 180},
                 {"prompt": "A grand orchestral arrangement with thunderous percussion, epic brass fanfares, and soaring strings, creating a cinematic atmosphere fit for a heroic battle.", "seconds_start": 0, "seconds_total": 190}
             ],
-            "demo_cfg_scales": [3, 6, 9]
+            "demo_cfg_scales": [3]
+            
         }
     }
 }

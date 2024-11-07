@@ -1,4 +1,4 @@
-import json
+import json, os
 
 from .factory import create_model_from_config
 from .utils import load_ckpt_state_dict
@@ -21,5 +21,20 @@ def get_pretrained_model(name: str):
         model_ckpt_path = hf_hub_download(name, filename="model.ckpt", repo_type='model')
 
     model.load_state_dict(load_ckpt_state_dict(model_ckpt_path))
+
+    return model, model_config
+
+def load_local_trained_model(model_config_path: str, model_ckpt_path: str):
+        
+    with open(model_config_path) as f:
+        model_config = json.load(f)
+
+    model = create_model_from_config(model_config)
+    
+    print("unwrapping the model to model_unwrap.ckpt")
+    os.system(f"python ./unwrap_model.py --model-config {model_config_path} --ckpt-path {model_ckpt_path} --name model_unwrap")
+    
+    # model.load_state_dict(load_ckpt_state_dict(model_ckpt_path))
+    model.load_state_dict(load_ckpt_state_dict("model_unwrap.ckpt"))
 
     return model, model_config

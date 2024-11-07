@@ -5,6 +5,7 @@ import logging, warnings
 import string
 import typing as tp
 import gc
+from torch.nn.utils.rnn import pad_sequence
 
 from .adp import NumberEmbedder
 from ..inference.utils import set_audio_channels
@@ -321,7 +322,47 @@ class T5Conditioner(Conditioner):
         embeddings = embeddings * attention_mask.unsqueeze(-1).float()
 
         return embeddings, attention_mask
-    
+
+
+class MidiConditioner(Conditioner):
+    def __init__(
+        self,
+        output_dim: int,
+        midi_vocab_size: int = 901,
+        midi_embedding_dim: int = 768,
+        max_length: int = 1024,
+        enable_grad: bool = False,
+        project_out: bool = False
+    ):
+        super().__init__(midi_embedding_dim, output_dim, project_out=project_out)
+
+        self.max_length = max_length
+        self.enable_grad = enable_grad
+
+        # Define an embedding layer for the MIDI tokens
+        self.midi_embedding = nn.Embedding(midi_vocab_size, midi_embedding_dim) 
+
+    def forward(
+        self, 
+        midi_tokens: torch.Tensor, 
+        device: tp.Union[torch.device, str]
+    ) -> tp.Tuple[torch.Tensor, torch.Tensor]:
+        
+        self.midi_embedding.to(device)
+        self.proj_out.to(device)
+
+        attention_mask = (midi_tokens != 0).to(device).to(torch.bool)  # Binary mask for non-padding tokens
+
+        with torch.cuda.amp.autocast(dtype=torch.float16) and torch.set_grad_enabled(self.enable_grad):
+            embeddings = self.midi_embedding(midi_tokens.to(int).to(device))  # Shape: (batch_size, max_length, midi_embedding_dim)
+            
+        embeddings = self.proj_out(embeddings.float())  # Optionally project embeddings to output_dim
+        
+        embeddings = embeddings * attention_mask.unsqueeze(-1).float()
+
+        return embeddings, attention_mask 
+
+
 class PhonemeConditioner(Conditioner):
     """
     A conditioner that turns text into phonemes and embeds them using a lookup table
@@ -497,14 +538,20 @@ class MultiConditioner(nn.Module):
                         raise ValueError(f"Conditioner key {condition_key} not found in batch metadata")
 
                 #Unwrap the condition info if it's a single-element list or tuple, this is to support collation functions that wrap everything in a list
-                if isinstance(x[condition_key], list) or isinstance(x[condition_key], tuple) and len(x[condition_key]) == 1:
+                if (isinstance(x[condition_key], list) or isinstance(x[condition_key], tuple)) and len(x[condition_key]) == 1:
                     conditioner_input = x[condition_key][0]
                     
                 else:
                     conditioner_input = x[condition_key]
 
                 conditioner_inputs.append(conditioner_input)
-            
+
+            if condition_key == "midi":
+                # pad the midi tokens to the same length
+                if isinstance(conditioner_inputs[0], list):
+                    conditioner_inputs = torch.Tensor(conditioner_inputs)
+                conditioner_inputs = pad_sequence(conditioner_inputs, batch_first=True, padding_value=0)
+                
             output[key] = conditioner(conditioner_inputs, device)
 
         return output
@@ -537,6 +584,8 @@ def create_multi_conditioner_from_conditioning_config(config: tp.Dict[str, tp.An
             conditioners[id] = CLAPTextConditioner(**conditioner_config)
         elif conditioner_type == "clap_audio":
             conditioners[id] = CLAPAudioConditioner(**conditioner_config)
+        elif conditioner_type == "midi":
+            conditioners[id] = MidiConditioner(**conditioner_config)
         elif conditioner_type == "int":
             conditioners[id] = IntConditioner(**conditioner_config)
         elif conditioner_type == "number":

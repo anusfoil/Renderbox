@@ -10,6 +10,7 @@ import time
 import torch
 import torchaudio
 import webdataset as wds
+import note_seq
 
 from aeiou.core import is_silence
 from os import path
@@ -18,6 +19,9 @@ from torchaudio import transforms as T
 from typing import Optional, Callable, List
 
 from .utils import Stereo, Mono, PhaseFlipper, PadCrop_Normalized_T
+from .midi_utils import preprocess, save_midi_and_wav
+from .event_codec import Codec
+from .alignment_utils import asap_alignment_segpoint
 
 AUDIO_KEYS = ("flac", "wav", "mp3", "m4a", "ogg", "opus")
 
@@ -127,6 +131,7 @@ class SampleDataset(torch.utils.data.Dataset):
         sample_rate=48000, 
         keywords=None, 
         random_crop=True,
+        midi_length=10,
         force_channels="stereo"
     ):
         super().__init__()
@@ -139,6 +144,10 @@ class SampleDataset(torch.utils.data.Dataset):
         self.root_paths = []
 
         self.pad_crop = PadCrop_Normalized_T(sample_size, sample_rate, randomize=random_crop)
+        
+        resolution = 100
+        self.midi_length = midi_length
+        self.codec = Codec(int(midi_length * resolution + 1))
 
         self.force_channels = force_channels
 
@@ -158,6 +167,7 @@ class SampleDataset(torch.utils.data.Dataset):
                 self.custom_metadata_fns[config.path] = config.custom_metadata_fn
 
         print(f'Found {len(self.filenames)} files')
+        
 
     def load_file(self, filename):
         ext = filename.split(".")[-1]
@@ -180,12 +190,49 @@ class SampleDataset(torch.utils.data.Dataset):
         return len(self.filenames)
 
     def __getitem__(self, idx):
-        audio_filename = self.filenames[idx]
-        try:
+            audio_filename = self.filenames[idx]
+        # try:
+
+            info = {}
+
+            info["path"] = audio_filename
+
+            for root_path in self.root_paths:
+                if root_path in audio_filename:
+                    info["relpath"] = path.relpath(audio_filename, root_path)
+
+            for custom_md_path in self.custom_metadata_fns.keys():
+                if custom_md_path in audio_filename:
+                    custom_metadata_fn = self.custom_metadata_fns[custom_md_path]
+                    custom_metadata = custom_metadata_fn(info)
+                    info.update(custom_metadata)
+
+                if "__reject__" in info and info["__reject__"]:
+                    return self[random.randrange(len(self))]
+
+            optional_start_seconds, optional_end_seconds = None, None
+            if "midi" in info:
+                midi_tokens = midi_to_tokens(info["midi"], self.codec, midi_length=self.midi_length)
+                info['midi'] = midi_tokens
+                
+                corresp_path = info["path"].replace(".wav", "_corresp.txt")
+                segpoints = asap_alignment_segpoint(corresp_path, midi_len=self.midi_length)
+                if type(segpoints) == type(None):
+                    return self[random.randrange(len(self))]
+                optional_start_seconds, optional_end_seconds = segpoints[0], segpoints[1]
+                
+
             start_time = time.time()
             audio = self.load_file(audio_filename)
 
-            audio, t_start, t_end, seconds_start, seconds_total, padding_mask = self.pad_crop(audio)
+            audio, t_start, t_end, seconds_start, seconds_total, padding_mask = self.pad_crop(audio, optional_start_seconds, optional_end_seconds )
+
+            info["timestamps"] = (t_start, t_end)
+            info["seconds_start"] = seconds_start
+            info["seconds_total"] = seconds_total
+            info["padding_mask"] = padding_mask
+
+            # save_midi_and_wav(idx, 0, info["midi"], self.codec, audio, self.sr)
 
             # Run augmentations on this sample (including random crop)
             if self.augs is not None:
@@ -196,6 +243,111 @@ class SampleDataset(torch.utils.data.Dataset):
             # Encode the file to assist in prediction
             if self.encoding is not None:
                 audio = self.encoding(audio)
+                
+            end_time = time.time()
+            info["load_time"] = end_time - start_time            
+
+            return (audio, info)
+        # except Exception as e:
+        #     print(f'Couldn\'t load file {audio_filename}: {e}')
+        #     return self[random.randrange(len(self))]
+
+
+
+
+class SampleDatasetChunk(torch.utils.data.Dataset):
+    def __init__(
+        self, 
+        configs,
+        sample_size=65536, 
+        sample_rate=48000, 
+        keywords=None, 
+        random_crop=True,
+        midi_length=10,
+        force_channels="stereo"
+    ):
+        super().__init__()
+        
+        filenames = []
+
+        self.augs = torch.nn.Sequential(
+            PhaseFlipper(),
+        )
+
+        self.root_paths = []
+
+        self.pad_crop = PadCrop_Normalized_T(sample_size, sample_rate, randomize=random_crop)
+        
+        resolution = 100
+        self.midi_length = midi_length
+        self.codec = Codec(int(midi_length * resolution + 1))
+
+        self.force_channels = force_channels
+
+        self.encoding = torch.nn.Sequential(
+            Stereo() if self.force_channels == "stereo" else torch.nn.Identity(),
+            Mono() if self.force_channels == "mono" else torch.nn.Identity(),
+        )
+
+        self.sr = sample_rate
+
+        self.custom_metadata_fns = {}
+
+        for config in configs:
+            self.root_paths.append(config.path)
+            filenames.extend(get_audio_filenames(config.path, keywords))
+            if config.custom_metadata_fn is not None:
+                self.custom_metadata_fns[config.path] = config.custom_metadata_fn
+
+        print(f'Found {len(filenames)} files')
+        
+        # load from the segmentation points to determine the boundaries of segments
+        boundaries = [0]
+        self.filenames = []
+        for audio_filename in filenames:
+            corresp_path = audio_filename.replace(".wav", "_corresp.txt")
+            segpoints = asap_alignment_segpoint(corresp_path, midi_len=self.midi_length)
+            if type(segpoints) == type(None):
+                continue
+            num_chunks = len(segpoints) - 2
+            boundaries.append(boundaries[-1] + num_chunks)
+            self.filenames.append(audio_filename)
+        
+        print(f'total number of chunks: {boundaries[-1]}')
+        self.boundaries = boundaries
+
+
+    def load_file(self, filename):
+        ext = filename.split(".")[-1]
+
+        if ext == "mp3":
+            with AudioFile(filename) as f:
+                audio = f.read(f.frames)
+                audio = torch.from_numpy(audio)
+                in_sr = f.samplerate
+        else:
+            audio, in_sr = torchaudio.load(filename, format=ext)
+
+        if in_sr != self.sr:
+            resample_tf = T.Resample(in_sr, self.sr)
+            audio = resample_tf(audio)
+
+        return audio
+
+    def __len__(self):
+        return self.boundaries[-1]
+
+    def _get_file_idx_and_chunk_idx(self, index: int):
+        bin_pos = np.digitize(index, self.boundaries[1:], right=False)
+        chunk_index = index - self.boundaries[bin_pos]
+        return bin_pos, chunk_index
+    
+
+    def __getitem__(self, idx):
+            file_idx, chunk_idx = self._get_file_idx_and_chunk_idx(idx)
+            # chunk_idx = 0
+            audio_filename = self.filenames[file_idx]
+        # try:
 
             info = {}
 
@@ -205,28 +357,77 @@ class SampleDataset(torch.utils.data.Dataset):
                 if root_path in audio_filename:
                     info["relpath"] = path.relpath(audio_filename, root_path)
 
-            info["timestamps"] = (t_start, t_end)
-            info["seconds_start"] = seconds_start
-            info["seconds_total"] = seconds_total
-            info["padding_mask"] = padding_mask
-
-            end_time = time.time()
-
-            info["load_time"] = end_time - start_time
-
             for custom_md_path in self.custom_metadata_fns.keys():
                 if custom_md_path in audio_filename:
                     custom_metadata_fn = self.custom_metadata_fns[custom_md_path]
-                    custom_metadata = custom_metadata_fn(info, audio)
+                    custom_metadata = custom_metadata_fn(info)
                     info.update(custom_metadata)
 
                 if "__reject__" in info and info["__reject__"]:
                     return self[random.randrange(len(self))]
 
+            optional_start_seconds, optional_end_seconds  = None, None
+            if "midi" in info:
+                midi_tokens = midi_to_tokens(info["midi"], self.codec, midi_length=self.midi_length)
+                try:
+                    info['midi'] = midi_tokens[chunk_idx]
+                except:
+                    return self[random.randrange(len(self))]
+                
+                corresp_path = info["path"].replace(".wav", "_corresp.txt")
+                segpoints = asap_alignment_segpoint(corresp_path, midi_len=self.midi_length)
+                if type(segpoints) == type(None):
+                    return self[random.randrange(len(self))]
+                optional_start_seconds, optional_end_seconds = segpoints[chunk_idx], segpoints[chunk_idx + 1]
+                
+
+            start_time = time.time()
+            audio = self.load_file(audio_filename)
+
+            try:
+                audio, t_start, t_end, seconds_start, seconds_total, padding_mask = self.pad_crop(audio, optional_start_seconds, optional_end_seconds )
+            except:
+                return self[random.randrange(len(self))]
+
+            info["timestamps"] = (t_start, t_end)
+            info["seconds_start"] = seconds_start
+            info["seconds_total"] = seconds_total
+            info["padding_mask"] = padding_mask
+
+            # save_midi_and_wav(file_idx, chunk_idx, info["midi"], self.codec, audio, self.sr)
+
+            # Run augmentations on this sample (including random crop)
+            if self.augs is not None:
+                audio = self.augs(audio)
+
+            audio = audio.clamp(-1, 1)
+
+            # Encode the file to assist in prediction
+            if self.encoding is not None:
+                audio = self.encoding(audio)
+                
+            end_time = time.time()
+            info["load_time"] = end_time - start_time            
+
             return (audio, info)
-        except Exception as e:
-            print(f'Couldn\'t load file {audio_filename}: {e}')
-            return self[random.randrange(len(self))]
+        # except Exception as e:
+        #     print(f'Couldn\'t load file {audio_filename}: {e}')
+        #     return self[random.randrange(len(self))]
+
+
+def midi_to_tokens(midi_path, codec, midi_length=10):
+    import warnings
+    warnings.filterwarnings("ignore", category=RuntimeWarning)
+    
+    ns = note_seq.midi_file_to_note_sequence(midi_path)
+    ns = note_seq.apply_sustain_control_changes(ns)
+    
+    # get the first 10 seconds of midi 
+    tokens, _ = preprocess( ns, segment_length=midi_length, codec=codec)
+
+    return tokens
+
+
 
 def group_by_keys(data, keys=wds.tariterators.base_plus_ext, lcase=True, suffixes=None, handler=None):
     """Return function over iterator that groups key, value pairs into samples.
@@ -594,13 +795,25 @@ def create_dataloader_from_config(dataset_config, batch_size, sample_size, sampl
                 )
             )
 
-        train_set = SampleDataset(
-            configs,
-            sample_rate=sample_rate,
-            sample_size=sample_size,
-            random_crop=dataset_config.get("random_crop", True),
-            force_channels=force_channels
-        )
+        use_chunks = dataset_config.get("use_chunks", False)
+        if use_chunks:
+            train_set = SampleDatasetChunk(
+                configs,
+                sample_rate=sample_rate,
+                sample_size=sample_size,
+                random_crop=dataset_config.get("random_crop", True),
+                midi_length=dataset_config.get("midi_length", 10),
+                force_channels=force_channels
+            )
+        else:
+            train_set = SampleDataset(
+                configs,
+                sample_rate=sample_rate,
+                sample_size=sample_size,
+                random_crop=dataset_config.get("random_crop", True),
+                midi_length=dataset_config.get("midi_length", 10),
+                force_channels=force_channels
+            )
 
         return torch.utils.data.DataLoader(train_set, batch_size, shuffle=True,
                                 num_workers=num_workers, persistent_workers=True, pin_memory=True, drop_last=True, collate_fn=collation_fn)

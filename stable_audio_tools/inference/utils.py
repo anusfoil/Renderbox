@@ -14,15 +14,15 @@ def set_audio_channels(audio, target_channels):
             audio = audio[:, :2, :]
     return audio
 
-def prepare_audio(audio, in_sr, target_sr, target_length, target_channels, device):
+def prepare_audio(audio, in_sr, target_sr, target_length, target_channels, device='cuda:0'):
     
     audio = audio.to(device)
-
+    
     if in_sr != target_sr:
         resample_tf = T.Resample(in_sr, target_sr).to(device)
         audio = resample_tf(audio)
 
-    audio = PadCrop(target_length, randomize=False)(audio)
+    # audio = PadCrop(target_length, randomize=False)(audio)
 
     # Add batch dimension
     if audio.dim() == 1:

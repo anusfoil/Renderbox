@@ -11,6 +11,8 @@ from stable_audio_tools.models.utils import load_ckpt_state_dict, remove_weight_
 from stable_audio_tools.training import create_training_wrapper_from_config, create_demo_callback_from_config
 from stable_audio_tools.training.utils import copy_state_dict
 
+import hook
+
 class ExceptionCallback(pl.Callback):
     def on_exception(self, trainer, module, err):
         print(f'{type(err).__name__}: {err}')
@@ -55,6 +57,7 @@ def main():
 
     if args.pretrained_ckpt_path:
         copy_state_dict(model, load_ckpt_state_dict(args.pretrained_ckpt_path))
+        # model.load_state_dict(load_ckpt_state_dict(args.pretrained_ckpt_path))
     
     if args.remove_pretransform_weight_norm == "pre_load":
         remove_weight_norm_from_model(model.pretransform)
@@ -104,7 +107,8 @@ def main():
         else:
             strategy = args.strategy
     else:
-        strategy = 'ddp_find_unused_parameters_true' if args.num_gpus > 1 else "auto" 
+        strategy = 'ddp' if args.num_gpus > 1 else "auto" 
+        # strategy = 'ddp_find_unused_parameters_true' if args.num_gpus > 1 else "auto" 
 
     trainer = pl.Trainer(
         devices=args.num_gpus,
