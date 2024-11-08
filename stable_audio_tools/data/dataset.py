@@ -11,6 +11,7 @@ import torch
 import torchaudio
 import webdataset as wds
 import note_seq
+import pandas as pd
 
 from aeiou.core import is_silence
 from os import path
@@ -21,7 +22,7 @@ from typing import Optional, Callable, List
 from .utils import Stereo, Mono, PhaseFlipper, PadCrop_Normalized_T
 from .midi_utils import preprocess, save_midi_and_wav
 from .event_codec import Codec
-from .alignment_utils import asap_alignment_segpoint
+from .alignment_utils import asap_alignment_segpoint, get_yamahasax_segpoints
 
 AUDIO_KEYS = ("flac", "wav", "mp3", "m4a", "ogg", "opus")
 
@@ -112,15 +113,90 @@ def get_audio_filenames(
         filenames.extend(files)
     return filenames
 
+def get_metadata_info(dataset_id, base_path, metadata_row, codec, midi_len=10):
+        
+    if dataset_id == "asap":
+        audio_path = posixpath.join(base_path, metadata_row['audio_performance'])
+        midi_path = posixpath.join(base_path, metadata_row['midi_score'])
+        
+        alignment_path = audio_path.replace(".wav", "_corresp.txt")
+        segpoints = asap_alignment_segpoint(alignment_path, midi_len=midi_len)
+        
+        if "midi_score" in audio_path:
+            style_keword = ", plain synthesis"
+        else:
+            style_keword = ", expressive performance"
+        
+        text_prompt = "Piano, " + ", ".join(metadata_row['audio_performance'].split("/")[:-1]) + style_keword        
+        
+            
+    if dataset_id == "yamahasax":
+        if not metadata_row['align_success']:
+            return None, None, None, None, None
+    
+        audio_path = posixpath.join(base_path, metadata_row['WAV Path'])
+        align_midi_path = posixpath.join(base_path, metadata_row['MIDI Path'])
+        midi_path = posixpath.join(base_path, metadata_row['Transposed MIDI Path'])
+        
+        alignment_path = posixpath.join(base_path, metadata_row['Alignment Path'])
+        segpoints = get_yamahasax_segpoints(align_midi_path, alignment_path, midi_len=midi_len)
+        
+        path_parts = audio_path.split('/')
+        style = path_parts[-4].split('_')[-1]  # Extracts 'BossaNova', 'Funk', etc.
+        title = re.sub(r'\.mid|_Theme1|Sax_|Expressive_|No_expression_|On_', '', path_parts[-1]) 
+        expression = ('Expressive playing' if 'Expressive' in path_parts[-1] else 'No expression')
+        text_prompt = f"Saxophone solo, {style}, {title}, {expression}"
+        
+    if type(segpoints) == type(None):
+        return None, None, None, None, None
+    
+    midi_tokens = midi_to_tokens(midi_path, codec, midi_length=midi_len)
+    if len(midi_tokens) != len(segpoints) - 1:
+        # print(f"Warning: Length mismatch at {audio_path}, tokens: {len(midi_tokens)}, segpoints: {len(segpoints)}")
+        pass
+    num_chunks = min(len(midi_tokens), len(segpoints) - 1)
+    
+    return audio_path, midi_tokens, segpoints, num_chunks, text_prompt
+
+
+SPEED_TIERS = {
+    "very slow": ["twice as slow as", "significantly slower", "at a leisurely pace, far slower"],
+    "slow": ["about half the speed of", "considerably slower", "moving slower"],
+    "slightly slow": ["a bit slower than score", "just under the score’s tempo", "slightly behind the intended pace"],
+    "neutral": ["at the original speed", "faithfully matching", "in line with the score's tempo"],
+    "slightly fast": ["a bit faster", "just above the score’s speed", "slightly faster than score"],
+    "fast": ["notably faster", "well beyond the original tempo"],
+    "very fast": ["almost twice as fast", "substantially quicker", "at a rapid pace, nearly double the tempo"]
+}
+
+def tier_speed_description(speed_ratio):
+    """Returns a descriptive phrase based on speed ratio."""
+    if speed_ratio >= 1.8:
+        return random.choice(SPEED_TIERS["very slow"])
+    elif 1.2 <= speed_ratio < 1.8:
+        return random.choice(SPEED_TIERS["slow"])
+    elif 0.8 <= speed_ratio < 1.2:
+        return random.choice(SPEED_TIERS["slightly slow"])
+    elif 0.8 <= speed_ratio <= 1.2 or (speed_ratio <= 0.1):
+        return random.choice(SPEED_TIERS["neutral"])
+    elif 0.6 <= speed_ratio < 0.8:
+        return random.choice(SPEED_TIERS["slightly fast"])
+    elif 0.4 <= speed_ratio < 0.6:
+        return random.choice(SPEED_TIERS["fast"])
+    else:
+        return random.choice(SPEED_TIERS["very fast"])
+
 class LocalDatasetConfig:
     def __init__(
         self,
         id: str,
         path: str,
+        metadata_path: str,
         custom_metadata_fn: Optional[Callable[[str], str]] = None
     ):
         self.id = id
         self.path = path
+        self.metadata_path = metadata_path
         self.custom_metadata_fn = custom_metadata_fn
 
 class SampleDataset(torch.utils.data.Dataset):
@@ -208,24 +284,12 @@ class SampleDataset(torch.utils.data.Dataset):
                     info.update(custom_metadata)
 
                 if "__reject__" in info and info["__reject__"]:
-                    return self[random.randrange(len(self))]
-
-            optional_start_seconds, optional_end_seconds = None, None
-            if "midi" in info:
-                midi_tokens = midi_to_tokens(info["midi"], self.codec, midi_length=self.midi_length)
-                info['midi'] = midi_tokens
-                
-                corresp_path = info["path"].replace(".wav", "_corresp.txt")
-                segpoints = asap_alignment_segpoint(corresp_path, midi_len=self.midi_length)
-                if type(segpoints) == type(None):
-                    return self[random.randrange(len(self))]
-                optional_start_seconds, optional_end_seconds = segpoints[0], segpoints[1]
-                
+                    return self[random.randrange(len(self))]                
 
             start_time = time.time()
             audio = self.load_file(audio_filename)
 
-            audio, t_start, t_end, seconds_start, seconds_total, padding_mask = self.pad_crop(audio, optional_start_seconds, optional_end_seconds )
+            audio, t_start, t_end, seconds_start, seconds_total, padding_mask = self.pad_crop(audio )
 
             info["timestamps"] = (t_start, t_end)
             info["seconds_start"] = seconds_start
@@ -291,31 +355,34 @@ class SampleDatasetChunk(torch.utils.data.Dataset):
 
         self.sr = sample_rate
 
-        self.custom_metadata_fns = {}
+        # load from the segmentation points to determine the boundaries of segments
+        self.boundaries = [0]
+        self.data_list = []
 
         for config in configs:
             self.root_paths.append(config.path)
-            filenames.extend(get_audio_filenames(config.path, keywords))
-            if config.custom_metadata_fn is not None:
-                self.custom_metadata_fns[config.path] = config.custom_metadata_fn
 
-        print(f'Found {len(filenames)} files')
+            metadata = pd.read_csv(config.metadata_path)   
+            
+            for id, row in metadata.iterrows():
+                audio_path, midi_tokens, segpoints, num_chunks, text_prompt = get_metadata_info(config.id, config.path, row, self.codec, midi_len=self.midi_length)
+                
+                if type(segpoints) == type(None):
+                    continue
+                
+                self.boundaries.append(self.boundaries[-1] + num_chunks)
+                self.data_list.append(
+                    (audio_path, midi_tokens, segpoints, text_prompt)
+                ) 
         
-        # load from the segmentation points to determine the boundaries of segments
-        boundaries = [0]
-        self.filenames = []
-        for audio_filename in filenames:
-            corresp_path = audio_filename.replace(".wav", "_corresp.txt")
-            segpoints = asap_alignment_segpoint(corresp_path, midi_len=self.midi_length)
-            if type(segpoints) == type(None):
-                continue
-            num_chunks = len(segpoints) - 2
-            boundaries.append(boundaries[-1] + num_chunks)
-            self.filenames.append(audio_filename)
         
-        print(f'total number of chunks: {boundaries[-1]}')
-        self.boundaries = boundaries
+        print(f'Found {len(self.data_list)} files, total number of chunks: {self.boundaries[-1]}')        
+        
+        # from tqdm import tqdm
+        # for i in tqdm(range(0, len(self))):
+        #     self.__getitem__(i)
 
+        # hook()
 
     def load_file(self, filename):
         ext = filename.split(".")[-1]
@@ -346,43 +413,25 @@ class SampleDatasetChunk(torch.utils.data.Dataset):
     def __getitem__(self, idx):
             file_idx, chunk_idx = self._get_file_idx_and_chunk_idx(idx)
             # chunk_idx = 0
-            audio_filename = self.filenames[file_idx]
+            audio_path, midi_tokens, segpoints, text_prompt = self.data_list[file_idx]
         # try:
 
             info = {}
 
-            info["path"] = audio_filename
+            info["path"] = audio_path
+            info['prompt'] = text_prompt
+            info['midi'] = midi_tokens[chunk_idx]
+            optional_start_seconds, optional_end_seconds = segpoints[chunk_idx], segpoints[chunk_idx + 1]
 
-            for root_path in self.root_paths:
-                if root_path in audio_filename:
-                    info["relpath"] = path.relpath(audio_filename, root_path)
+            # if ('bwv_868' in info["path"]) :
+            #     print(f'bwv_868: {optional_start_seconds}, {optional_end_seconds}')
+            #     hook()
 
-            for custom_md_path in self.custom_metadata_fns.keys():
-                if custom_md_path in audio_filename:
-                    custom_metadata_fn = self.custom_metadata_fns[custom_md_path]
-                    custom_metadata = custom_metadata_fn(info)
-                    info.update(custom_metadata)
-
-                if "__reject__" in info and info["__reject__"]:
-                    return self[random.randrange(len(self))]
-
-            optional_start_seconds, optional_end_seconds  = None, None
-            if "midi" in info:
-                midi_tokens = midi_to_tokens(info["midi"], self.codec, midi_length=self.midi_length)
-                try:
-                    info['midi'] = midi_tokens[chunk_idx]
-                except:
-                    return self[random.randrange(len(self))]
-                
-                corresp_path = info["path"].replace(".wav", "_corresp.txt")
-                segpoints = asap_alignment_segpoint(corresp_path, midi_len=self.midi_length)
-                if type(segpoints) == type(None):
-                    return self[random.randrange(len(self))]
-                optional_start_seconds, optional_end_seconds = segpoints[chunk_idx], segpoints[chunk_idx + 1]
-                
+            if "__reject__" in info and info["__reject__"]:
+                return self[random.randrange(len(self))]                
 
             start_time = time.time()
-            audio = self.load_file(audio_filename)
+            audio = self.load_file(audio_path)
 
             try:
                 audio, t_start, t_end, seconds_start, seconds_total, padding_mask = self.pad_crop(audio, optional_start_seconds, optional_end_seconds )
@@ -393,8 +442,12 @@ class SampleDatasetChunk(torch.utils.data.Dataset):
             info["seconds_start"] = seconds_start
             info["seconds_total"] = seconds_total
             info["padding_mask"] = padding_mask
+            
+            # update the text prompt based on speed ratio
+            info['prompt'] += f", {tier_speed_description(seconds_total / self.midi_length)}"
 
-            # save_midi_and_wav(file_idx, chunk_idx, info["midi"], self.codec, audio, self.sr)
+            # if random.random() < 0.01:
+            #     save_midi_and_wav(file_idx, chunk_idx, info["midi"], self.codec, audio, self.sr)
 
             # Run augmentations on this sample (including random crop)
             if self.augs is not None:
@@ -429,194 +482,6 @@ def midi_to_tokens(midi_path, codec, midi_length=10):
 
 
 
-def group_by_keys(data, keys=wds.tariterators.base_plus_ext, lcase=True, suffixes=None, handler=None):
-    """Return function over iterator that groups key, value pairs into samples.
-    :param keys: function that splits the key into key and extension (base_plus_ext)
-    :param lcase: convert suffixes to lower case (Default value = True)
-    """
-    current_sample = None
-    for filesample in data:
-        assert isinstance(filesample, dict)
-        fname, value = filesample["fname"], filesample["data"]
-        prefix, suffix = keys(fname)
-        if wds.tariterators.trace:
-            print(
-                prefix,
-                suffix,
-                current_sample.keys() if isinstance(current_sample, dict) else None,
-            )
-        if prefix is None:
-            continue
-        if lcase:
-            suffix = suffix.lower()
-        if current_sample is None or prefix != current_sample["__key__"]:
-            if wds.tariterators.valid_sample(current_sample):
-                yield current_sample
-            current_sample = dict(__key__=prefix, __url__=filesample["__url__"])
-        if suffix in current_sample:
-            print(f"{fname}: duplicate file name in tar file {suffix} {current_sample.keys()}")
-        if suffixes is None or suffix in suffixes:
-            current_sample[suffix] = value
-    if wds.tariterators.valid_sample(current_sample):
-        yield current_sample
-
-wds.tariterators.group_by_keys = group_by_keys
-
-# S3 code and WDS preprocessing code based on implementation by Scott Hawley originally in https://github.com/zqevans/audio-diffusion/blob/main/dataset/dataset.py
-
-def get_s3_contents(dataset_path, s3_url_prefix=None, filter='', recursive=True, debug=False, profile=None):
-    """
-    Returns a list of full S3 paths to files in a given S3 bucket and directory path.
-    """
-    # Ensure dataset_path ends with a trailing slash
-    if dataset_path != '' and not dataset_path.endswith('/'):
-        dataset_path += '/'
-    # Use posixpath to construct the S3 URL path
-    bucket_path = posixpath.join(s3_url_prefix or '', dataset_path)
-    # Construct the `aws s3 ls` command
-    cmd = ['aws', 's3', 'ls', bucket_path]
-
-    if profile is not None:
-        cmd.extend(['--profile', profile])
-
-    if recursive:
-        # Add the --recursive flag if requested
-        cmd.append('--recursive')
-    
-    # Run the `aws s3 ls` command and capture the output
-    run_ls = subprocess.run(cmd, capture_output=True, check=True)
-    # Split the output into lines and strip whitespace from each line
-    contents = run_ls.stdout.decode('utf-8').split('\n')
-    contents = [x.strip() for x in contents if x]
-    # Remove the timestamp from lines that begin with a timestamp
-    contents = [re.sub(r'^\S+\s+\S+\s+\d+\s+', '', x)
-                if re.match(r'^\S+\s+\S+\s+\d+\s+', x) else x for x in contents]
-    # Construct a full S3 path for each file in the contents list
-    contents = [posixpath.join(s3_url_prefix or '', x)
-                for x in contents if not x.endswith('/')]
-    # Apply the filter, if specified
-    if filter:
-        contents = [x for x in contents if filter in x]
-    # Remove redundant directory names in the S3 URL
-    if recursive:
-        # Get the main directory name from the S3 URL
-        main_dir = "/".join(bucket_path.split('/')[3:])
-        # Remove the redundant directory names from each file path
-        contents = [x.replace(f'{main_dir}', '').replace(
-            '//', '/') for x in contents]
-    # Print debugging information, if requested
-    if debug:
-        print("contents = \n", contents)
-    # Return the list of S3 paths to files
-    return contents
-
-
-def get_all_s3_urls(
-    names=[],           # list of all valid [LAION AudioDataset] dataset names
-    # list of subsets you want from those datasets, e.g. ['train','valid']
-    subsets=[''],
-    s3_url_prefix=None,  # prefix for those dataset names
-    recursive=True,     # recursively list all tar files in all subdirs
-    filter_str='tar',   # only grab files with this substring
-    # print debugging info -- note: info displayed likely to change at dev's whims
-    debug=False,
-    profiles={},        # dictionary of profiles for each item in names, e.g. {'dataset1': 'profile1', 'dataset2': 'profile2'}
-):
-    "get urls of shards (tar files) for multiple datasets in one s3 bucket"
-    urls = []
-    for name in names:
-        # If s3_url_prefix is not specified, assume the full S3 path is included in each element of the names list
-        if s3_url_prefix is None:
-            contents_str = name
-        else:
-            # Construct the S3 path using the s3_url_prefix and the current name value
-            contents_str = posixpath.join(s3_url_prefix, name)
-        if debug:
-            print(f"get_all_s3_urls: {contents_str}:")
-        for subset in subsets:
-            subset_str = posixpath.join(contents_str, subset)
-            if debug:
-                print(f"subset_str = {subset_str}")
-            # Get the list of tar files in the current subset directory
-            profile = profiles.get(name, None)
-            tar_list = get_s3_contents(
-                subset_str, s3_url_prefix=None, recursive=recursive, filter=filter_str, debug=debug, profile=profile)
-            for tar in tar_list:
-                # Escape spaces and parentheses in the tar filename for use in the shell command
-                tar = tar.replace(" ", "\ ").replace(
-                    "(", "\(").replace(")", "\)")
-                # Construct the S3 path to the current tar file
-                s3_path = posixpath.join(name, subset, tar) + " -"
-                # Construct the AWS CLI command to download the current tar file
-                if s3_url_prefix is None:
-                    request_str = f"pipe:aws s3 --cli-connect-timeout 0 cp {s3_path}"
-                else:
-                    request_str = f"pipe:aws s3 --cli-connect-timeout 0 cp {posixpath.join(s3_url_prefix, s3_path)}"
-                if profiles.get(name):
-                    request_str += f" --profile {profiles.get(name)}"
-                if debug:
-                    print("request_str = ", request_str)
-                # Add the constructed URL to the list of URLs
-                urls.append(request_str)
-    return urls
-
-
-def log_and_continue(exn):
-    """Call in an exception handler to ignore any exception, isssue a warning, and continue."""
-    print(f"Handling webdataset error ({repr(exn)}). Ignoring.")
-    return True
-
-
-def is_valid_sample(sample):
-    has_json = "json" in sample
-    has_audio = "audio" in sample
-    is_silent = is_silence(sample["audio"])
-    is_rejected = "__reject__" in sample["json"] and sample["json"]["__reject__"]
-
-    return has_json and has_audio and not is_silent and not is_rejected
-
-class S3DatasetConfig:
-    def __init__(
-        self,
-        id: str,
-        s3_path: str,
-        custom_metadata_fn: Optional[Callable[[str], str]] = None,
-        profile: Optional[str] = None,
-    ):
-        self.id = id
-        self.path = s3_path
-        self.custom_metadata_fn = custom_metadata_fn
-        self.profile = profile
-        self.urls = []
-
-    def load_data_urls(self):
-        self.urls = get_all_s3_urls(
-            names=[self.path],
-            s3_url_prefix=None,
-            recursive=True,
-            profiles={self.path: self.profile} if self.profile else {},
-        )
-
-        return self.urls
-
-class LocalWebDatasetConfig:
-    def __init__(
-        self,
-        id: str,
-        path: str,
-        custom_metadata_fn: Optional[Callable[[str], str]] = None,
-        profile: Optional[str] = None,
-    ):
-        self.id = id
-        self.path = path
-        self.custom_metadata_fn = custom_metadata_fn
-        self.urls = []
-
-    def load_data_urls(self):
-
-        self.urls = fast_scandir(self.path, ["tar"])[1]
-
-        return self.urls
 
 def audio_decoder(key, value):
     # Get file extension from key
@@ -642,117 +507,6 @@ def collation_fn(samples):
             result.append(b)
         return result
 
-class WebDatasetDataLoader():
-    def __init__(
-        self,
-        datasets: List[S3DatasetConfig],
-        batch_size,
-        sample_size,
-        sample_rate=48000,
-        num_workers=8,
-        epoch_steps=1000,
-        random_crop=True,
-        force_channels="stereo",
-        augment_phase=True,
-        **data_loader_kwargs
-    ):
-
-        self.datasets = datasets
-
-        self.sample_size = sample_size
-        self.sample_rate = sample_rate
-        self.random_crop = random_crop
-        self.force_channels = force_channels
-        self.augment_phase = augment_phase
-
-        urls = [dataset.load_data_urls() for dataset in datasets]
-
-        # Flatten the list of lists of URLs
-        urls = [url for dataset_urls in urls for url in dataset_urls]
-
-        # Shuffle the urls
-        random.shuffle(urls)
-
-        self.dataset = wds.DataPipeline(
-            wds.ResampledShards(urls),
-            wds.tarfile_to_samples(handler=log_and_continue),
-            wds.decode(audio_decoder, handler=log_and_continue),
-            wds.map(self.wds_preprocess, handler=log_and_continue),
-            wds.select(is_valid_sample),
-            wds.to_tuple("audio", "json", handler=log_and_continue),
-            #wds.shuffle(bufsize=1000, initial=5000),
-            wds.batched(batch_size, partial=False, collation_fn=collation_fn),
-        ).with_epoch(epoch_steps//num_workers if num_workers > 0 else epoch_steps)
-
-        self.data_loader = wds.WebLoader(self.dataset, num_workers=num_workers, **data_loader_kwargs)
-
-    def wds_preprocess(self, sample):
-
-        found_key, rewrite_key = '', ''
-        for k, v in sample.items():  # print the all entries in dict
-            for akey in AUDIO_KEYS:
-                if k.endswith(akey):
-                    # to rename long/weird key with its simpler counterpart
-                    found_key, rewrite_key = k, akey
-                    break
-            if '' != found_key:
-                break
-        if '' == found_key:  # got no audio!
-            return None  # try returning None to tell WebDataset to skip this one
-
-        audio, in_sr = sample[found_key]
-        if in_sr != self.sample_rate:
-            resample_tf = T.Resample(in_sr, self.sample_rate)
-            audio = resample_tf(audio)
-
-        if self.sample_size is not None:
-            # Pad/crop and get the relative timestamp
-            pad_crop = PadCrop_Normalized_T(
-                self.sample_size, randomize=self.random_crop, sample_rate=self.sample_rate)
-            audio, t_start, t_end, seconds_start, seconds_total, padding_mask = pad_crop(
-                audio)
-            sample["json"]["seconds_start"] = seconds_start
-            sample["json"]["seconds_total"] = seconds_total
-            sample["json"]["padding_mask"] = padding_mask
-        else:
-            t_start, t_end = 0, 1
-
-        # Check if audio is length zero, initialize to a single zero if so
-        if audio.shape[-1] == 0:
-            audio = torch.zeros(1, 1)
-
-        # Make the audio stereo and augment by randomly inverting phase
-        augs = torch.nn.Sequential(
-            Stereo() if self.force_channels == "stereo" else torch.nn.Identity(),
-            Mono() if self.force_channels == "mono" else torch.nn.Identity(),
-            PhaseFlipper() if self.augment_phase else torch.nn.Identity()
-        )
-
-        audio = augs(audio)
-
-        sample["json"]["timestamps"] = (t_start, t_end)
-
-        if "text" in sample["json"]:
-            sample["json"]["prompt"] = sample["json"]["text"]
-
-        # Check for custom metadata functions
-        for dataset in self.datasets:
-            if dataset.custom_metadata_fn is None:
-                continue
-        
-            if dataset.path in sample["__url__"]:
-                custom_metadata = dataset.custom_metadata_fn(sample["json"], audio)
-                sample["json"].update(custom_metadata)
-
-        if found_key != rewrite_key:   # rename long/weird key with its simpler counterpart
-            del sample[found_key]
-
-        sample["audio"] = audio
-
-        # Add audio to the metadata as well for conditioning
-        sample["json"]["audio"] = audio
-        
-        return sample
 
 def create_dataloader_from_config(dataset_config, batch_size, sample_size, sample_rate, audio_channels=2, num_workers=4):
 
@@ -791,6 +545,7 @@ def create_dataloader_from_config(dataset_config, batch_size, sample_size, sampl
                 LocalDatasetConfig(
                     id=audio_dir_config["id"],
                     path=audio_dir_path,
+                    metadata_path=audio_dir_config.get("metadata_path", None),
                     custom_metadata_fn=custom_metadata_fn
                 )
             )

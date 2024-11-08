@@ -114,7 +114,7 @@
             "demo_steps": 250,
             "num_demos": 5,
             "demo_cond": [
-                {"prompt": "Bach, Prelude, bwv 846, expressive performance", "seconds_start": 0, "seconds_total": 30}, 
+                {"prompt": "Bach, Prelude, bwv 868, expressive performance", "seconds_start": 0, "seconds_total": 17}, 
                 {"prompt": "A beautiful piano arpeggio", "seconds_start": 0, "seconds_total": 80},
                 {"prompt": "A tropical house track with upbeat melodies, a driving bassline, and cheery vibes", "seconds_start": 0, "seconds_total": 250},
                 {"prompt": "A cool 80s glam rock song with driving drums and distorted guitars", "seconds_start": 0, "seconds_total": 180},

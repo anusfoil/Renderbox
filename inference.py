@@ -1,3 +1,4 @@
+import json
 import torch
 import torchaudio
 from einops import rearrange
@@ -10,20 +11,34 @@ device = "cuda" if torch.cuda.is_available() else "cpu"
 
 # Download model
 # model, model_config = get_pretrained_model("stabilityai/stable-audio-open-1.0")
-model, model_config = load_local_trained_model("/home/intern-2024-04/SAO/stable_audio/stable_audio_tools/configs/model_configs/txt2audio/stable_audio_2_0.json", 
-                                               "/home/intern-2024-04/SAO/stable_audio/harmonai_train/tj57otg2/checkpoints/epoch=128-step=900.ckpt",
+
+# model_config_path = "/home/intern-2024-04/SAO/stable_audio/stable_audio_tools/configs/model_configs/txt2audio/stable_audio_2_0.json"
+# model, model_config = load_local_trained_model(model_config_path, 
+#                                                "/home/intern-2024-04/SAO/stable_audio/harmonai_train/fm2kbxyx/checkpoints/epoch=482-step=2700.ckpt",
+#                                                )
+model_config_path = "/home/intern-2024-04/SAO/stable_audio/stable_audio_tools/configs/model_configs/txt2audio/stable_audio_3_0.json"
+model, model_config = load_local_trained_model(model_config_path, 
+                                               "/home/intern-2024-04/SAO/stable_audio/harmonai_train/mqyurc56/checkpoints/epoch=22-step=1900.ckpt",
                                                )
+
 sample_rate = model_config["sample_rate"]
 sample_size = model_config["sample_size"]
 
 model = model.to(device)
 
+with open(model_config_path) as f:
+    model_config = json.load(f)
+    
+# use the first demo data as conditioning
+conditioning = [model_config['training']['demo']['demo_cond'][0]] # use the first one in the 
+print(conditioning[0]['prompt'])
+
 # Set up text and timing conditioning
-conditioning = [{
-    "prompt": "Bach, Prelude, bwv_846, expressive performance",
-    "seconds_start": 0, 
-    "seconds_total": 47
-}]
+# conditioning = [{
+#     "prompt": "Bach, Prelude, bwv_846, expressive performance",
+#     "seconds_start": 0, 
+#     "seconds_total": 47
+# }]
 
 # Generate stereo audio
 output = generate_diffusion_cond(
