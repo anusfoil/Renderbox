@@ -22,7 +22,7 @@ from typing import Optional, Callable, List
 from .utils import Stereo, Mono, PhaseFlipper, PadCrop_Normalized_T
 from .midi_utils import preprocess, save_midi_and_wav
 from .event_codec import Codec
-from .alignment_utils import asap_alignment_segpoint, get_yamahasax_segpoints
+from .alignment_utils import asap_alignment_segpoint, get_yamahasax_segpoints, get_musicnet_segpoints
 
 AUDIO_KEYS = ("flac", "wav", "mp3", "m4a", "ogg", "opus")
 
@@ -115,20 +115,26 @@ def get_audio_filenames(
 
 def get_metadata_info(dataset_id, base_path, metadata_row, codec, midi_len=10):
         
+    prompt_dict = {}
+        
     if dataset_id == "asap":
         audio_path = posixpath.join(base_path, metadata_row['audio_performance'])
         midi_path = posixpath.join(base_path, metadata_row['midi_score'])
         
         alignment_path = audio_path.replace(".wav", "_corresp.txt")
+        if not os.path.exists(alignment_path):
+            assert("midi_score" in audio_path) # synthesis
+            segpoints = np.arange(0, 1000, midi_len)
         segpoints = asap_alignment_segpoint(alignment_path, midi_len=midi_len)
         
         if "midi_score" in audio_path:
-            style_keword = ", plain synthesis"
+            prompt_dict['perf'] = ", plain synthesis"
         else:
-            style_keword = ", expressive performance"
+            prompt_dict['perf'] = ", expressive performance"
         
-        text_prompt = "Piano, " + ", ".join(metadata_row['audio_performance'].split("/")[:-1]) + style_keword        
-        
+        prompt_dict['instrument'] = "Piano"
+        prompt_dict['title'] = ", ".join(metadata_row['audio_performance'].split("/")[:-1])
+                
             
     if dataset_id == "yamahasax":
         if not metadata_row['align_success']:
@@ -142,10 +148,30 @@ def get_metadata_info(dataset_id, base_path, metadata_row, codec, midi_len=10):
         segpoints = get_yamahasax_segpoints(align_midi_path, alignment_path, midi_len=midi_len)
         
         path_parts = audio_path.split('/')
-        style = path_parts[-4].split('_')[-1]  # Extracts 'BossaNova', 'Funk', etc.
+        form = path_parts[-4].split('_')[-1]  # Extracts 'BossaNova', 'Funk', etc.
         title = re.sub(r'\.mid|_Theme1|Sax_|Expressive_|No_expression_|On_', '', path_parts[-1]) 
-        expression = ('Expressive playing' if 'Expressive' in path_parts[-1] else 'No expression')
-        text_prompt = f"Saxophone solo, {style}, {title}, {expression}"
+        prompt_dict['perf'] = ('Expressive playing' if 'Expressive' in path_parts[-1] else 'No expression')
+        
+        prompt_dict['instrument'] = "Saxophone"
+        prompt_dict['title'] = f"{form}, {title}"
+        
+    if dataset_id == "urmp":
+        pass
+        
+    if dataset_id == "musicnet":
+        audio_path = posixpath.join(base_path, metadata_row['audio_path'])
+        midi_path = posixpath.join(base_path, metadata_row['score_midi_path'])
+        alignment_path = posixpath.join(base_path, metadata_row['alignment_path'])
+        
+        try:
+            segpoints = get_musicnet_segpoints(midi_path, alignment_path, midi_len=midi_len)
+        except:
+            print(f"Error in {audio_path}")
+            return None, None, None, None, None
+        prompt_dict['instrument'] = metadata_row['instrumentation']
+        prompt_dict['title'] = metadata_row['score_midi_path'].split("/")[1] + ", " + metadata_row['piece']
+        prompt_dict['perf'] = "Expressive performance"
+        
         
     if type(segpoints) == type(None):
         return None, None, None, None, None
@@ -156,12 +182,12 @@ def get_metadata_info(dataset_id, base_path, metadata_row, codec, midi_len=10):
         pass
     num_chunks = min(len(midi_tokens), len(segpoints) - 1)
     
-    return audio_path, midi_tokens, segpoints, num_chunks, text_prompt
+    return audio_path, midi_tokens, segpoints, num_chunks, prompt_dict
 
 
 SPEED_TIERS = {
-    "very slow": ["twice as slow as", "significantly slower", "at a leisurely pace, far slower"],
-    "slow": ["about half the speed of", "considerably slower", "moving slower"],
+    "very slow": ["twice as slow as", "significantly slower", "far slower", "about half the speed of"],
+    "slow": ["considerably slower", "moving slower"],
     "slightly slow": ["a bit slower than score", "just under the score’s tempo", "slightly behind the intended pace"],
     "neutral": ["at the original speed", "faithfully matching", "in line with the score's tempo"],
     "slightly fast": ["a bit faster", "just above the score’s speed", "slightly faster than score"],
@@ -173,9 +199,9 @@ def tier_speed_description(speed_ratio):
     """Returns a descriptive phrase based on speed ratio."""
     if speed_ratio >= 1.8:
         return random.choice(SPEED_TIERS["very slow"])
-    elif 1.2 <= speed_ratio < 1.8:
+    elif 1.5 <= speed_ratio < 1.8:
         return random.choice(SPEED_TIERS["slow"])
-    elif 0.8 <= speed_ratio < 1.2:
+    elif 1.2 <= speed_ratio < 1.5:
         return random.choice(SPEED_TIERS["slightly slow"])
     elif 0.8 <= speed_ratio <= 1.2 or (speed_ratio <= 0.1):
         return random.choice(SPEED_TIERS["neutral"])
@@ -185,6 +211,31 @@ def tier_speed_description(speed_ratio):
         return random.choice(SPEED_TIERS["fast"])
     else:
         return random.choice(SPEED_TIERS["very fast"])
+
+def sample_prompt(prompt_dict):
+    """
+    prompt have several fields, perf and speed are required and the rest of the fields are sampled with 0.5 probability.
+    Then they are concatenated with random order
+    """
+
+    required_fields = ['perf', 'speed']
+    sampled_fields = {field: prompt_dict[field] for field in required_fields if field in prompt_dict}
+
+    optional_fields = {
+        field: prompt_dict[field]
+        for field in prompt_dict
+        if field not in required_fields and random.random() < 0.5
+    }
+
+    combined_fields = list(sampled_fields.values()) + list(optional_fields.values())
+
+    random.shuffle(combined_fields)
+
+    prompt = ", ".join(combined_fields)
+    
+    return prompt
+
+
 
 class LocalDatasetConfig:
     def __init__(
@@ -328,7 +379,8 @@ class SampleDatasetChunk(torch.utils.data.Dataset):
         keywords=None, 
         random_crop=True,
         midi_length=10,
-        force_channels="stereo"
+        force_channels="stereo",
+        split="train"
     ):
         super().__init__()
         
@@ -363,16 +415,21 @@ class SampleDatasetChunk(torch.utils.data.Dataset):
             self.root_paths.append(config.path)
 
             metadata = pd.read_csv(config.metadata_path)   
+            if split == 'train':
+                metadata = metadata[metadata['split'] == 'train']
+            else:
+                metadata = metadata[metadata['split'] != 'train']
+            print(f'Found {len(metadata)} files in {config.metadata_path}')
             
             for id, row in metadata.iterrows():
-                audio_path, midi_tokens, segpoints, num_chunks, text_prompt = get_metadata_info(config.id, config.path, row, self.codec, midi_len=self.midi_length)
+                audio_path, midi_tokens, segpoints, num_chunks, prompt_dict = get_metadata_info(config.id, config.path, row, self.codec, midi_len=self.midi_length)
                 
                 if type(segpoints) == type(None):
                     continue
                 
                 self.boundaries.append(self.boundaries[-1] + num_chunks)
                 self.data_list.append(
-                    (audio_path, midi_tokens, segpoints, text_prompt)
+                    (audio_path, midi_tokens, segpoints, prompt_dict)
                 ) 
         
         
@@ -413,13 +470,12 @@ class SampleDatasetChunk(torch.utils.data.Dataset):
     def __getitem__(self, idx):
             file_idx, chunk_idx = self._get_file_idx_and_chunk_idx(idx)
             # chunk_idx = 0
-            audio_path, midi_tokens, segpoints, text_prompt = self.data_list[file_idx]
+            audio_path, midi_tokens, segpoints, prompt_dict = self.data_list[file_idx]
         # try:
 
             info = {}
 
             info["path"] = audio_path
-            info['prompt'] = text_prompt
             info['midi'] = midi_tokens[chunk_idx]
             optional_start_seconds, optional_end_seconds = segpoints[chunk_idx], segpoints[chunk_idx + 1]
 
@@ -444,10 +500,14 @@ class SampleDatasetChunk(torch.utils.data.Dataset):
             info["padding_mask"] = padding_mask
             
             # update the text prompt based on speed ratio
-            info['prompt'] += f", {tier_speed_description(seconds_total / self.midi_length)}"
+            prompt_dict['speed'] = tier_speed_description(seconds_total / self.midi_length)
+            info['prompt'] = sample_prompt(prompt_dict)
 
             # if random.random() < 0.01:
             #     save_midi_and_wav(file_idx, chunk_idx, info["midi"], self.codec, audio, self.sr)
+            info['file_idx'] = file_idx
+            info['chunk_idx'] = chunk_idx
+            info['audio_path'] = audio_path
 
             # Run augmentations on this sample (including random crop)
             if self.augs is not None:
@@ -508,7 +568,7 @@ def collation_fn(samples):
         return result
 
 
-def create_dataloader_from_config(dataset_config, batch_size, sample_size, sample_rate, audio_channels=2, num_workers=4):
+def create_dataloader_from_config(dataset_config, batch_size, sample_size, sample_rate, audio_channels=2, num_workers=4, split="train"):
 
     dataset_type = dataset_config.get("dataset_type", None)
 
@@ -558,7 +618,8 @@ def create_dataloader_from_config(dataset_config, batch_size, sample_size, sampl
                 sample_size=sample_size,
                 random_crop=dataset_config.get("random_crop", True),
                 midi_length=dataset_config.get("midi_length", 10),
-                force_channels=force_channels
+                force_channels=force_channels,
+                split=split
             )
         else:
             train_set = SampleDataset(
@@ -567,7 +628,8 @@ def create_dataloader_from_config(dataset_config, batch_size, sample_size, sampl
                 sample_size=sample_size,
                 random_crop=dataset_config.get("random_crop", True),
                 midi_length=dataset_config.get("midi_length", 10),
-                force_channels=force_channels
+                force_channels=force_channels,
+                split=split
             )
 
         return torch.utils.data.DataLoader(train_set, batch_size, shuffle=True,

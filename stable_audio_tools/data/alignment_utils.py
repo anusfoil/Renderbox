@@ -3,6 +3,7 @@ import mido
 import numpy as np
 import pandas as pd
 import partitura as pt
+from fastdtw import fastdtw
 from scipy.interpolate import interp1d
 
 
@@ -184,4 +185,126 @@ def get_yamahasax_segpoints(midi_file, alignment_file, frame_to_samples=1200, sa
     assert np.isnan(segpoints).sum() == 0, "segpoints doesn't contains NaNs"
     assert np.isinf(segpoints).sum() == 0, "segpoints doesn't contains Infs"
     
+    return segpoints
+
+
+########################### MUSICNET ###########################
+
+def parse_midi_file_to_df(midi_file):
+    """
+    Parse the MIDI file and return a pandas DataFrame with onset, offset, and pitch information.
+    """
+    midi_data = []
+    mid = mido.MidiFile(midi_file)
+    current_time = 0
+    notes_on = {}
+
+    for msg in mid:
+        current_time += msg.time
+        if msg.type == 'note_on' and msg.velocity > 0:
+            notes_on[msg.note] = current_time
+        elif msg.type == 'note_off' or (msg.type == 'note_on' and msg.velocity == 0):
+            if msg.note in notes_on:
+                onset_time = notes_on[msg.note]
+                offset_time = current_time
+                duration = offset_time - onset_time
+                midi_data.append([onset_time, offset_time, msg.note])  # [onset, offset, pitch]
+                del notes_on[msg.note]
+
+    # Convert to a pandas DataFrame
+    midi_df = pd.DataFrame(midi_data, columns=['onset', 'offset', 'pitch'])
+    return midi_df
+
+
+def parse_alignment_file(alignment_file, sr=44100):
+    """
+    Parse the alignment CSV file and return a pandas DataFrame with onset, offset, and pitch information.
+    """
+    alignment_data = []
+    df = pd.read_csv(alignment_file)
+
+    for _, row in df.iterrows():
+        start_sample = row['start_time']
+        end_sample = row['end_time'] 
+        onset_time = start_sample / sr
+        offset_time = end_sample / sr
+        pitch = row['note']
+        
+        score_onset = row['start_beat']
+        score_offset = row['end_beat']
+
+        alignment_data.append([onset_time, offset_time, pitch, score_onset, score_offset]) 
+
+    # Convert to a pandas DataFrame
+    alignment_df = pd.DataFrame(alignment_data, columns=['onset', 'offset', 'pitch', 'score_onset', 'score_offset'])
+    return alignment_df
+
+def match_midi_alignment(midi_df, alignment_df):
+    """
+    Match MIDI and alignment data using Dynamic Time Warping (DTW) on pitch sequences.
+    The DTW algorithm will align the pitch sequences and map onset/offset times from MIDI to alignment.
+    """
+    midi_onsets = []
+    midi_offsets = []
+    audio_onsets = []
+    audio_offsets = []
+
+    # Extract pitch sequences from both MIDI and alignment data
+    midi_pitches = midi_df['pitch'].tolist()
+    alignment_pitches = alignment_df['pitch'].tolist()
+
+    # Perform DTW on the pitch sequences
+    distance, path = fastdtw(midi_pitches, alignment_pitches, dist=euclidean_distance)
+
+    # Use the DTW path to map onset and offset times
+    for i, j in path:
+        # Get the corresponding onset/offset times for the pitch alignment
+        midi_onset = midi_df.iloc[i]['onset']
+        midi_offset = midi_df.iloc[i]['offset']
+        alignment_onset = alignment_df.iloc[j]['onset']
+        alignment_offset = alignment_df.iloc[j]['offset']
+
+        # Add the corresponding times
+        midi_onsets.append(midi_onset)   # MIDI onset time
+        midi_offsets.append(midi_offset) # MIDI offset time
+        audio_onsets.append(alignment_onset)  # Alignment onset time
+        audio_offsets.append(alignment_offset)  # Alignment offset time
+
+    x = np.array(midi_onsets + midi_offsets)
+    y = np.array(audio_onsets + audio_offsets)
+    x, idx = np.unique(x, return_index=True)
+    y = y[idx]
+
+    # Create interpolators for onset and offset
+    alignment_func = interp1d(x, y, kind='nearest', fill_value='extrapolate')
+
+    return alignment_func
+
+# Custom Euclidean distance function for DTW
+def euclidean_distance(a, b):
+    """
+    Calculate the Euclidean distance between two pitch values.
+    """
+    return np.abs(a - b)
+
+
+
+
+def get_musicnet_segpoints(midi_file, alignment_file, sr=44100, midi_len=5.12):
+    """
+    Generate score and audio segments based on a given segment interval.
+    """
+    # Parse the MIDI and alignment files into DataFrames
+    midi_data = parse_midi_file_to_df(midi_file)
+    alignment_data = parse_alignment_file(alignment_file, sr)
+
+    # Match the MIDI and alignment data using DTW
+    alignment_func = match_midi_alignment(midi_data, alignment_data)
+
+    # Find the maximum offset time from the MIDI data
+    max_midi_time = max(midi_data['offset'])
+
+    score_segments = np.arange(0, max_midi_time + midi_len, midi_len)
+    segpoints = alignment_func(score_segments)
+
     return segpoints

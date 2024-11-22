@@ -549,7 +549,7 @@ class MultiConditioner(nn.Module):
             if condition_key == "midi":
                 # pad the midi tokens to the same length
                 if isinstance(conditioner_inputs[0], list):
-                    conditioner_inputs = torch.Tensor(conditioner_inputs)
+                    conditioner_inputs = [torch.Tensor(seq) for seq in conditioner_inputs]
                 conditioner_inputs = pad_sequence(conditioner_inputs, batch_first=True, padding_value=0)
                 
             output[key] = conditioner(conditioner_inputs, device)
