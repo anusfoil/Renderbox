@@ -6,6 +6,7 @@ import posixpath
 import random
 import re
 import subprocess
+from itertools import chain
 import time
 import torch
 import torchaudio
@@ -22,7 +23,7 @@ from typing import Optional, Callable, List
 from .utils import Stereo, Mono, PhaseFlipper, PadCrop_Normalized_T
 from .midi_utils import preprocess, save_midi_and_wav
 from .event_codec import Codec
-from .alignment_utils import asap_alignment_segpoint, get_yamahasax_segpoints, get_musicnet_segpoints
+from .alignment_utils import asap_alignment_segpoint, get_yamahasax_segpoints, get_musicnet_segpoints, gaps_alignment_by_syncpoint, gaps_alignment_segpoint
 
 AUDIO_KEYS = ("flac", "wav", "mp3", "m4a", "ogg", "opus")
 
@@ -122,10 +123,18 @@ def get_metadata_info(dataset_id, base_path, metadata_row, codec, midi_len=10):
         midi_path = posixpath.join(base_path, metadata_row['midi_score'])
         
         alignment_path = audio_path.replace(".wav", "_corresp.txt")
+        
         if not os.path.exists(alignment_path):
             assert("midi_score" in audio_path) # synthesis
-            segpoints = np.arange(0, 1000, midi_len)
-        segpoints = asap_alignment_segpoint(alignment_path, midi_len=midi_len)
+            
+            speed_midi_len = midi_len
+            if "speed_ratio" in metadata_row: # alignment for the ones that's speed-augmented
+                speed_midi_len = midi_len * metadata_row['speed_ratio']
+                
+            segpoints = np.arange(0, 1000, speed_midi_len)
+        else:
+            segpoints = asap_alignment_segpoint(alignment_path, midi_len=midi_len)
+        
         
         if "midi_score" in audio_path:
             prompt_dict['perf'] = ", plain synthesis"
@@ -133,7 +142,9 @@ def get_metadata_info(dataset_id, base_path, metadata_row, codec, midi_len=10):
             prompt_dict['perf'] = ", expressive performance"
         
         prompt_dict['instrument'] = "Piano"
-        prompt_dict['title'] = ", ".join(metadata_row['audio_performance'].split("/")[:-1])
+        
+        if "midi_score" not in audio_path: 
+            prompt_dict['title'] = ", ".join(metadata_row['audio_performance'].split("/")[:-1])
                 
             
     if dataset_id == "yamahasax":
@@ -154,22 +165,48 @@ def get_metadata_info(dataset_id, base_path, metadata_row, codec, midi_len=10):
         
         prompt_dict['instrument'] = "Saxophone"
         prompt_dict['title'] = f"{form}, {title}"
+    
+    if dataset_id == "gaps":
+        if "good_alignment" in metadata_row and (not metadata_row['good_alignment']):
+            return None, None, None, None, None
         
+        audio_path = posixpath.join(base_path, metadata_row['audio_path'])
+        midi_path = posixpath.join(base_path, metadata_row['score_midi_path'])
+
+        if  "alignment_file_dir" in metadata_row:
+            if (isinstance(metadata_row['alignment_file_dir'], float)):
+                return None, None, None, None, None
+            alignment_dir_path = posixpath.join(base_path, metadata_row['alignment_file_dir'])
+            
+            segpoints = gaps_alignment_segpoint(alignment_dir_path, midi_len=midi_len)
+        else:
+            segpoints = np.arange(0, 1000, midi_len)
+            
+        prompt_dict['instrument'] = "Guitar"
+        prompt_dict['perf'] = "Expressive performance"
+    
+    
+    
     if dataset_id == "urmp":
         pass
         
     if dataset_id == "musicnet":
         audio_path = posixpath.join(base_path, metadata_row['audio_path'])
         midi_path = posixpath.join(base_path, metadata_row['score_midi_path'])
-        alignment_path = posixpath.join(base_path, metadata_row['alignment_path'])
         
-        try:
-            segpoints = get_musicnet_segpoints(midi_path, alignment_path, midi_len=midi_len)
-        except:
-            print(f"Error in {audio_path}")
-            return None, None, None, None, None
-        prompt_dict['instrument'] = metadata_row['instrumentation']
-        prompt_dict['title'] = metadata_row['score_midi_path'].split("/")[1] + ", " + metadata_row['piece']
+        if 'alignment_path'  in metadata_row:
+            alignment_path = posixpath.join(base_path, metadata_row['alignment_path'])
+            
+            try:
+                segpoints = get_musicnet_segpoints(midi_path, alignment_path, midi_len=midi_len)
+            except:
+                print(f"Error in {audio_path}")
+                return None, None, None, None, None
+        else:
+            segpoints = np.arange(0, 1000, midi_len)
+            
+        prompt_dict['instrument'] = metadata_row['instrumentation'] if 'instrumentation' in metadata_row else ""
+        prompt_dict['title'] = metadata_row['score_midi_path'].split("/")[1] + ", " + (metadata_row['piece'] if 'piece' in metadata_row else "")
         prompt_dict['perf'] = "Expressive performance"
         
         
@@ -212,11 +249,14 @@ def tier_speed_description(speed_ratio):
     else:
         return random.choice(SPEED_TIERS["very fast"])
 
-def sample_prompt(prompt_dict):
+def sample_prompt(prompt_dict, dummy_prompt=False):
     """
     prompt have several fields, perf and speed are required and the rest of the fields are sampled with 0.5 probability.
     Then they are concatenated with random order
     """
+    
+    if dummy_prompt:
+        return "synthesis"
 
     required_fields = ['perf', 'speed']
     sampled_fields = {field: prompt_dict[field] for field in required_fields if field in prompt_dict}
@@ -243,11 +283,13 @@ class LocalDatasetConfig:
         id: str,
         path: str,
         metadata_path: str,
+        metadata_augmented_path: Optional[str] = None,
         custom_metadata_fn: Optional[Callable[[str], str]] = None
     ):
         self.id = id
         self.path = path
         self.metadata_path = metadata_path
+        self.metadata_augmented_path = metadata_augmented_path
         self.custom_metadata_fn = custom_metadata_fn
 
 class SampleDataset(torch.utils.data.Dataset):
@@ -380,7 +422,8 @@ class SampleDatasetChunk(torch.utils.data.Dataset):
         random_crop=True,
         midi_length=10,
         force_channels="stereo",
-        split="train"
+        split="train",
+        dummy_prompt=False
     ):
         super().__init__()
         
@@ -406,23 +449,42 @@ class SampleDatasetChunk(torch.utils.data.Dataset):
         )
 
         self.sr = sample_rate
+        self.dummy_prompt = dummy_prompt
 
         # load from the segmentation points to determine the boundaries of segments
         self.boundaries = [0]
         self.data_list = []
 
+        import warnings
+        warnings.filterwarnings("ignore", category=FutureWarning)
         for config in configs:
             self.root_paths.append(config.path)
 
             metadata = pd.read_csv(config.metadata_path)   
+            
             if split == 'train':
                 metadata = metadata[metadata['split'] == 'train']
             else:
-                metadata = metadata[metadata['split'] != 'train']
-            print(f'Found {len(metadata)} files in {config.metadata_path}')
+                if 'split' in metadata.columns:
+                    metadata = metadata[metadata['split'] != 'train']
             
-            for id, row in metadata.iterrows():
-                audio_path, midi_tokens, segpoints, num_chunks, prompt_dict = get_metadata_info(config.id, config.path, row, self.codec, midi_len=self.midi_length)
+            meta_iter = metadata.iterrows()
+            
+            if config.metadata_augmented_path is not None:
+                metadata_augmented = pd.read_csv(config.metadata_augmented_path)
+                if split == 'train':
+                    metadata_augmented = metadata_augmented[metadata_augmented['split'] == 'train']
+                else:
+                    metadata_augmented = metadata_augmented[metadata_augmented['split'] != 'train']
+                
+                meta_iter = chain(metadata.iterrows(), metadata_augmented.iterrows())
+                                            
+            for id, row in meta_iter:
+                try:
+                    audio_path, midi_tokens, segpoints, num_chunks, prompt_dict = get_metadata_info(config.id, config.path, row, self.codec, midi_len=self.midi_length)
+                except Exception as e:
+                    print(f'Error in {config.id}, {config.path}, {row}: {e}')
+                    continue
                 
                 if type(segpoints) == type(None):
                     continue
@@ -431,15 +493,10 @@ class SampleDatasetChunk(torch.utils.data.Dataset):
                 self.data_list.append(
                     (audio_path, midi_tokens, segpoints, prompt_dict)
                 ) 
+                # print(len(self.data_list)-1, audio_path)
+                
         
-        
-        print(f'Found {len(self.data_list)} files, total number of chunks: {self.boundaries[-1]}')        
-        
-        # from tqdm import tqdm
-        # for i in tqdm(range(0, len(self))):
-        #     self.__getitem__(i)
-
-        # hook()
+        print(f'Found {len(self.data_list)} files, total number of chunks: {self.boundaries[-1]}')    
 
     def load_file(self, filename):
         ext = filename.split(".")[-1]
@@ -487,9 +544,9 @@ class SampleDatasetChunk(torch.utils.data.Dataset):
                 return self[random.randrange(len(self))]                
 
             start_time = time.time()
-            audio = self.load_file(audio_path)
 
             try:
+                audio = self.load_file(audio_path)
                 audio, t_start, t_end, seconds_start, seconds_total, padding_mask = self.pad_crop(audio, optional_start_seconds, optional_end_seconds )
             except:
                 return self[random.randrange(len(self))]
@@ -501,10 +558,14 @@ class SampleDatasetChunk(torch.utils.data.Dataset):
             
             # update the text prompt based on speed ratio
             prompt_dict['speed'] = tier_speed_description(seconds_total / self.midi_length)
-            info['prompt'] = sample_prompt(prompt_dict)
+            info['prompt'] = sample_prompt(prompt_dict, dummy_prompt=self.dummy_prompt)
 
             # if random.random() < 0.01:
+            #     print(info['prompt'])
             #     save_midi_and_wav(file_idx, chunk_idx, info["midi"], self.codec, audio, self.sr)
+            # save_midi_and_wav(audio_path.split("/")[-1][:-4], chunk_idx, info["midi"], self.codec, audio, self.sr)
+            
+                
             info['file_idx'] = file_idx
             info['chunk_idx'] = chunk_idx
             info['audio_path'] = audio_path
@@ -606,6 +667,7 @@ def create_dataloader_from_config(dataset_config, batch_size, sample_size, sampl
                     id=audio_dir_config["id"],
                     path=audio_dir_path,
                     metadata_path=audio_dir_config.get("metadata_path", None),
+                    metadata_augmented_path=audio_dir_config.get("metadata_augmented_path", None),
                     custom_metadata_fn=custom_metadata_fn
                 )
             )
@@ -619,7 +681,8 @@ def create_dataloader_from_config(dataset_config, batch_size, sample_size, sampl
                 random_crop=dataset_config.get("random_crop", True),
                 midi_length=dataset_config.get("midi_length", 10),
                 force_channels=force_channels,
-                split=split
+                split=split,
+                dummy_prompt=dataset_config.get("dummy_prompt", False)
             )
         else:
             train_set = SampleDataset(

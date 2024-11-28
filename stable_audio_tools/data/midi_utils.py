@@ -376,10 +376,10 @@ def save_midi_and_wav(file_idx, chunk_idx, tokens, codec, data, sr, output_folde
         note_sequence = tokens_to_notes(tokens, codec)
         midi_path = os.path.join(save_dir, f'{chunk_idx}.mid')
         note_sequence_to_midi_file(note_sequence, midi_path)
-        print(f"Saved MIDI: {midi_path}")
+        # print(f"Saved MIDI: {midi_path}")
 
     if type(data) != type(None):
         wav_path = os.path.join(save_dir, f'{chunk_idx}.wav')
         data = rearrange(data, "d n -> n d")
         sf.write(wav_path, data, sr)
-        print(f"Saved WAV: {wav_path}")
+        # print(f"Saved WAV: {wav_path}")

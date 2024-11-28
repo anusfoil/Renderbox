@@ -21,22 +21,23 @@ device = "cuda" if torch.cuda.is_available() else "cpu"
 #                                                "/home/intern-2024-04/SAO/stable_audio/harmonai_train/fm2kbxyx/checkpoints/epoch=482-step=2700.ckpt",
 #                                                )
 model_config_path = "/home/intern-2024-04/SAO/stable_audio/stable_audio_tools/configs/model_configs/txt2audio/stable_audio_3_0.json"
-dataloader_config_path = "/home/intern-2024-04/SAO/stable_audio/stable_audio_tools/configs/dataset_configs/local_datasets.json"
+dataloader_config_path = "/home/intern-2024-04/SAO/stable_audio/stable_audio_tools/configs/dataset_configs/stage_0_datasets.json"
 model, model_config = load_local_trained_model(model_config_path, 
-                                               "/home/intern-2024-04/SAO/stable_audio/harmonai_train/6kn4j206/checkpoints/epoch=350-step=16700.ckpt",
+                                               "/home/intern-2024-04/SAO/stable_audio/harmonai_train/rlaqmgss/checkpoints/epoch=30-step=1700.ckpt",
                                                )
 
-sample_rate = model_config["sample_rate"]
-sample_size = model_config["sample_size"]
-
 model = model.to(device)
+hook()
 
 with open(model_config_path) as f:
     model_config = json.load(f)
+
+sample_rate = model_config["sample_rate"]
+sample_size = model_config["sample_size"]
     
-# use the first demo data as conditioning
-conditioning = [model_config['training']['demo']['demo_cond'][0]]
-print(conditioning[0]['prompt'])
+# # use the first demo data as conditioning
+# conditioning = [model_config['training']['demo']['demo_cond'][0]]
+# print(conditioning[0]['prompt'])
 
 # for batch, get conditions from the dataloader
 with open(dataloader_config_path) as f:
@@ -47,8 +48,12 @@ midi_length = dataloader_config["midi_length"]
 resolution = 100
 codec = Codec(int(midi_length * resolution + 1))
 
-dataloader = create_dataloader_from_config(dataloader_config, batch_size=1, num_workers=3, sample_rate=sample_rate, sample_size=sample_size, audio_channels=2, split='test')
+dataloader = create_dataloader_from_config(dataloader_config, batch_size=1, num_workers=3, sample_rate=sample_rate, sample_size=sample_size, audio_channels=2, 
+                                           split='train'
+                                           )
 
+import warnings
+warnings.filterwarnings("ignore", category=FutureWarning)
 
 for i, data in enumerate(dataloader):
     audio, info = data  # Unpack data
@@ -63,26 +68,26 @@ for i, data in enumerate(dataloader):
     output_folder = os.path.join("outputs_musicnet", str(i))
     os.makedirs(output_folder, exist_ok=True)
     
-    # Generate stereo audio
-    output = generate_diffusion_cond(
-        model,
-        steps=100,
-        cfg_scale=7,
-        conditioning=[condition],
-        sample_size=sample_size,
-        sigma_min=0.3,
-        sigma_max=500,
-        sampler_type="dpmpp-3m-sde",
-        device=device
-    )
+    # # Generate stereo audio
+    # output = generate_diffusion_cond(
+    #     model,
+    #     steps=100,
+    #     cfg_scale=7,
+    #     conditioning=[condition],
+    #     sample_size=sample_size,
+    #     sigma_min=0.3,
+    #     sigma_max=500,
+    #     sampler_type="dpmpp-3m-sde",
+    #     device=device
+    # )
     
-    # Rearrange audio batch to a single sequence
-    output = rearrange(output, "b d n -> d (b n)")
+    # # Rearrange audio batch to a single sequence
+    # output = rearrange(output, "b d n -> d (b n)")
     
-    # Peak normalize, clip, convert to int16, and save to file
-    output = output.to(torch.float32).div(torch.max(torch.abs(output))).clamp(-1, 1).mul(32767).to(torch.int16).cpu()
-    audio_file = os.path.join(output_folder, "output.wav")
-    torchaudio.save(audio_file, output, sample_rate)
+    # # Peak normalize, clip, convert to int16, and save to file
+    # output = output.to(torch.float32).div(torch.max(torch.abs(output))).clamp(-1, 1).mul(32767).to(torch.int16).cpu()
+    # audio_file = os.path.join(output_folder, "output.wav")
+    # torchaudio.save(audio_file, output, sample_rate)
     
     # Save prompt to text file
     prompt_file = os.path.join(output_folder, "prompt.txt")
@@ -114,6 +119,7 @@ for i, data in enumerate(dataloader):
     
     print(f"Processed and saved output for example {i} at {output_folder}")
 
+hook()
 
 # Generate stereo audio
 output = generate_diffusion_cond(

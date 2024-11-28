@@ -1,4 +1,4 @@
-import os, re
+import os, re, json
 import mido
 import numpy as np
 import pandas as pd
@@ -306,5 +306,96 @@ def get_musicnet_segpoints(midi_file, alignment_file, sr=44100, midi_len=5.12):
 
     score_segments = np.arange(0, max_midi_time + midi_len, midi_len)
     segpoints = alignment_func(score_segments)
+
+    return segpoints
+
+
+########################### GAPS ###########################
+
+
+def gaps_alignment_segpoint(alignment_dir, midi_len=5.12):
+    """
+    Generate segmentation points from an alignment file.
+
+    Args:
+        match_file (str): Path to the alignment file.
+        midi_len (float): Segment length in seconds.
+
+    Returns:
+        np.ndarray: Segmentation points in performance time.
+    """
+
+
+    performance, alignment, _, _, sna = pt.io.importparangonada.load_parangonada_csv(alignment_dir, create_score=True)
+    
+    score_df = pd.DataFrame(sna)
+    performance_df = pd.DataFrame(performance.note_array())
+    alignment_df = pd.DataFrame(alignment)
+
+    # print(alignment_dir)
+    # match_ratio, non_match_ratio = len(alignment_df[alignment_df['label'] == 'match']) / len(alignment_df), len(alignment_df[alignment_df['label'] != 'match']) / len(alignment_df)
+    # print(f"match_ratio: {match_ratio}, non_match_ratio: {non_match_ratio}")
+
+    if len(alignment_df[alignment_df["label"] != "match"]) > len(alignment_df[alignment_df["label"] == "match"]):
+        print(f"Warning: {alignment_dir} has more non-matching labels than matching labels")
+        # return None
+
+    alignment_df = alignment_df[alignment_df["label"] == "match"]
+
+    merged_df = pd.merge(alignment_df, score_df, left_on="score_id", right_on="id", suffixes=("_score", "_perf"))
+    merged_df = pd.merge(merged_df, performance_df, left_on="performance_id", right_on="id", suffixes=("_score", "_perf"))
+
+    columns_to_keep = [col for col in merged_df.columns if (not col.startswith("id_") and not col.endswith("_div") and not col.endswith("_quarter"))]
+    merged_df = merged_df[columns_to_keep]
+
+    interp_func = interp1d(merged_df["onset_sec_score"], merged_df["onset_sec_perf"], fill_value="extrapolate", kind="nearest")
+
+    segpoints = interp_func(np.arange(0, interp_func.x[-1] + midi_len, midi_len))
+
+    if np.isnan(segpoints[0]):
+        segpoints[0] = 0  # The first one might be zero because the performance starts later
+
+    assert np.isnan(segpoints).sum() == 0, "Segpoints contain NaNs"
+    assert np.isinf(segpoints).sum() == 0, "Segpoints contain Infs"
+
+    return segpoints
+
+
+def gaps_alignment_by_syncpoint(syncpoint_path, score_path, midi_len=10):
+    """
+    Using the given syncpoints of symbolic bar and audio time, infer from the MIDI 
+    to get the 10s alignments. Assumes the tempo does not change and the first note begins on the first bar.
+
+    Args:
+        syncpoint_path (str): Path to the JSON file containing syncpoints (symbolic bar and audio time pairs).
+        score_path (str): Path to the MIDI score file.
+
+    Returns:
+        interp1d: Function mapping MIDI score time (in seconds) to audio time (in seconds).
+    """
+    # Load syncpoints
+    with open(syncpoint_path, 'r') as f:
+        syncpoints = json.load(f)
+    
+    # Extract bars and audio times
+    bars, audio_times = zip(*syncpoints)  # Unpack into two lists
+
+    # Load MIDI file
+    midi = mido.MidiFile(score_path)
+
+    # Calculate MIDI duration in seconds
+    midi_total_time = sum(msg.time for msg in midi if not msg.is_meta)
+
+    # Infer bar durations
+    num_bars = len(bars)
+    midi_bar_duration = midi_total_time / num_bars
+
+    # Generate MIDI score times for each bar
+    midi_score_times = [i * midi_bar_duration for i in range(num_bars)]
+
+    # Create interpolation function
+    alignment_function = interp1d(midi_score_times, audio_times, kind='linear', fill_value="extrapolate")
+
+    segpoints = alignment_function(np.arange(0, midi_total_time, midi_len))
 
     return segpoints

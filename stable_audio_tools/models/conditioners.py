@@ -323,7 +323,6 @@ class T5Conditioner(Conditioner):
 
         return embeddings, attention_mask
 
-
 class MidiConditioner(Conditioner):
     def __init__(
         self,
@@ -342,6 +341,25 @@ class MidiConditioner(Conditioner):
         # Define an embedding layer for the MIDI tokens
         self.midi_embedding = nn.Embedding(midi_vocab_size, midi_embedding_dim) 
 
+        # Create sinusoidal positional embeddings
+        self.register_buffer(
+            "positional_embedding",
+            self.sinusoidal_embedding(max_length, midi_embedding_dim),
+            persistent=False  # Avoid saving this buffer
+        )
+
+    @staticmethod
+    def sinusoidal_embedding(length, dim):
+        """Create sinusoidal positional embeddings."""
+        position = torch.arange(0, length).unsqueeze(1)
+        div_term = torch.exp(
+            torch.arange(0, dim, 2) * -(torch.log(torch.tensor(10000.0)) / dim)
+        )
+        embedding = torch.zeros(length, dim)
+        embedding[:, 0::2] = torch.sin(position * div_term)
+        embedding[:, 1::2] = torch.cos(position * div_term)
+        return embedding
+
     def forward(
         self, 
         midi_tokens: torch.Tensor, 
@@ -351,16 +369,29 @@ class MidiConditioner(Conditioner):
         self.midi_embedding.to(device)
         self.proj_out.to(device)
 
-        attention_mask = (midi_tokens != 0).to(device).to(torch.bool)  # Binary mask for non-padding tokens
+        # Binary mask for non-padding tokens
+        attention_mask = (midi_tokens != 0).to(device).to(torch.bool)
 
-        with torch.cuda.amp.autocast(dtype=torch.float16) and torch.set_grad_enabled(self.enable_grad):
-            embeddings = self.midi_embedding(midi_tokens.to(int).to(device))  # Shape: (batch_size, max_length, midi_embedding_dim)
-            
-        embeddings = self.proj_out(embeddings.float())  # Optionally project embeddings to output_dim
+        # Generate token embeddings
+        midi_embeddings = self.midi_embedding(midi_tokens.to(int).to(device))
         
+        # Add sinusoidal positional embeddings
+        pos_embeddings = self.positional_embedding[:midi_embeddings.shape[1]].to(device)
+        if midi_embeddings.shape[1] > self.max_length:
+            print(f"Truncated MIDI tokens from {midi_embeddings.shape[1]} to {self.max_length}")
+            midi_embeddings = midi_embeddings[:, :self.max_length]
+            attention_mask = attention_mask[:, :self.max_length]
+            
+        embeddings = midi_embeddings + pos_embeddings  # Shape: (batch_size, seq_length, midi_embedding_dim)
+
+        # Optionally project embeddings to output_dim
+        embeddings = self.proj_out(embeddings.float())
+        
+        # Mask padding tokens
         embeddings = embeddings * attention_mask.unsqueeze(-1).float()
 
-        return embeddings, attention_mask 
+        return embeddings, attention_mask
+
 
 
 class PhonemeConditioner(Conditioner):
