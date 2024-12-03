@@ -84,7 +84,7 @@ def main(args):
 
         # Save MIDI input and ground truth audio
         audio = audio[0]
-        save_midi_and_wav("", "gt", info["midi"], codec, audio, sample_rate, output_folder=output_folder)
+        save_midi_and_wav("", "gt", info["midi"], codec, audio, sample_rate, output_folder=output_folder, synth_midi=True)
 
             
         # save metadata to text file
@@ -129,11 +129,6 @@ def main(args):
 
 
         hook()
-
-        
-
-            
-        
 
         
         print(f"Processed and saved output for example {i} at {output_folder}")

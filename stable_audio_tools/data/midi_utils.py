@@ -1,4 +1,4 @@
-import os
+import os, subprocess
 import note_seq
 from note_seq import note_sequence_to_midi_file
 import numpy as np
@@ -366,7 +366,7 @@ def _add_note_to_sequence(
     ns.total_time = max(ns.total_time, end_time)
 
 
-def save_midi_and_wav(file_idx, chunk_idx, tokens, codec, data, sr, output_folder='/work/check_data'):
+def save_midi_and_wav(file_idx, chunk_idx, tokens, codec, data, sr, output_folder='/work/check_data', synth_midi=False):
     # Create directory structure
     save_dir = os.path.join(output_folder, f"{file_idx}")
     os.makedirs(save_dir, exist_ok=True)
@@ -377,6 +377,19 @@ def save_midi_and_wav(file_idx, chunk_idx, tokens, codec, data, sr, output_folde
         midi_path = os.path.join(save_dir, f'{chunk_idx}.mid')
         note_sequence_to_midi_file(note_sequence, midi_path)
         # print(f"Saved MIDI: {midi_path}")
+        
+        if synth_midi:
+            # Synthesize MIDI to WAV
+            midi_synthesized = os.path.join(save_dir, f'{chunk_idx}_synthmid.wav')
+            try:
+                subprocess.run(
+                    ["fluidsynth", "-ni", "/work/GeneralUser-GS.sf2", midi_path, "-F", midi_synthesized],
+                    check=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE
+                )
+            except subprocess.CalledProcessError as e:
+                print(f"FluidSynth error: {e.stderr.decode()}")
 
     if type(data) != type(None):
         wav_path = os.path.join(save_dir, f'{chunk_idx}.wav')

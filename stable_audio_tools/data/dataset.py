@@ -23,7 +23,7 @@ from typing import Optional, Callable, List
 from .utils import Stereo, Mono, PhaseFlipper, PadCrop_Normalized_T
 from .midi_utils import preprocess, save_midi_and_wav
 from .event_codec import Codec
-from .alignment_utils import asap_alignment_segpoint, get_yamahasax_segpoints, get_musicnet_segpoints, gaps_alignment_by_syncpoint, gaps_alignment_segpoint
+from .alignment_utils import asap_alignment_segpoint, get_yamahasax_segpoints, get_musicnet_segpoints, gaps_alignment_segpoint, get_vienna422_segpoints, get_bachviolin_segpoints
 
 AUDIO_KEYS = ("flac", "wav", "mp3", "m4a", "ogg", "opus")
 
@@ -208,7 +208,50 @@ def get_metadata_info(dataset_id, base_path, metadata_row, codec, midi_len=10):
         prompt_dict['instrument'] = metadata_row['instrumentation'] if 'instrumentation' in metadata_row else ""
         prompt_dict['title'] = metadata_row['score_midi_path'].split("/")[1] + ", " + (metadata_row['piece'] if 'piece' in metadata_row else "")
         prompt_dict['perf'] = "Expressive performance"
+
+    if dataset_id == "burgmuller":
         
+        audio_path = posixpath.join(base_path, metadata_row['audio_path'])
+        midi_path = posixpath.join(base_path, metadata_row['score_midi_path'])
+
+        if  "alignment_file_dir" in metadata_row:
+            if (isinstance(metadata_row['alignment_file_dir'], float)):
+                return None, None, None, None, None
+            alignment_dir_path = posixpath.join(base_path, metadata_row['alignment_file_dir'])
+            
+            segpoints = gaps_alignment_segpoint(alignment_dir_path, midi_len=midi_len) # same one, with parangonar
+        else:
+            segpoints = np.arange(0, 1000, midi_len)
+            
+        prompt_dict['instrument'] = "Piano"
+        prompt_dict['perf'] = "Performance with mistakes"
+        
+    if dataset_id == 'vienna422':
+        
+        audio_path = posixpath.join(base_path, metadata_row['audio_path'])
+        midi_path = posixpath.join(base_path, metadata_row['score_midi_path'])
+        alignment_path = posixpath.join(base_path, metadata_row['alignment_path'])
+        
+        segpoints = get_vienna422_segpoints(alignment_path, midi_path, midi_len=midi_len)
+        
+        prompt_dict['instrument'] = "Piano"
+        prompt_dict['perf'] = "Expressive performance"
+        prompt_dict['title'] = metadata_row['audio_path'].split("/")[-2]
+        prompt_dict['performer'] = metadata_row['performer_label']
+
+    if dataset_id == 'bachviolin':
+        
+        audio_path = posixpath.join(base_path, metadata_row['audio_path'])
+        midi_path = posixpath.join(base_path, metadata_row['score_midi_path'])
+        alignment_path = posixpath.join(base_path, metadata_row['alignment_path'])
+        notes_path = alignment_path.replace("alignments", "notes")
+        
+        segpoints = get_bachviolin_segpoints(alignment_path, notes_path, midi_path, midi_len=midi_len)
+        
+        prompt_dict['instrument'] = "Violin"
+        prompt_dict['perf'] = "Expressive performance"
+        prompt_dict['title'] = metadata_row['score_midi_path'].split("/")[-2]
+        prompt_dict['performer'] = metadata_row['audio_path'].split("/")[-2]  
         
     if type(segpoints) == type(None):
         return None, None, None, None, None
@@ -485,6 +528,7 @@ class SampleDatasetChunk(torch.utils.data.Dataset):
                 except Exception as e:
                     print(f'Error in {config.id}, {config.path}, {row}: {e}')
                     continue
+
                 
                 if type(segpoints) == type(None):
                     continue
@@ -563,7 +607,7 @@ class SampleDatasetChunk(torch.utils.data.Dataset):
             # if random.random() < 0.01:
             #     print(info['prompt'])
             #     save_midi_and_wav(file_idx, chunk_idx, info["midi"], self.codec, audio, self.sr)
-            # save_midi_and_wav(audio_path.split("/")[-1][:-4], chunk_idx, info["midi"], self.codec, audio, self.sr)
+            save_midi_and_wav(audio_path.split("/")[-1][:-4], chunk_idx, info["midi"], self.codec, audio, self.sr)
             
                 
             info['file_idx'] = file_idx

@@ -166,3 +166,4 @@ harmonai_train
 .sf2
 outputs/
 outputs_musicnet/
+eval/

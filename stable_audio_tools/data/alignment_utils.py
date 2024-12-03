@@ -4,6 +4,7 @@ import numpy as np
 import pandas as pd
 import partitura as pt
 from fastdtw import fastdtw
+from scipy.spatial.distance import euclidean
 from scipy.interpolate import interp1d
 
 
@@ -399,3 +400,151 @@ def gaps_alignment_by_syncpoint(syncpoint_path, score_path, midi_len=10):
     segpoints = alignment_function(np.arange(0, midi_total_time, midi_len))
 
     return segpoints
+
+
+
+########################### VIENNA422 ###########################
+
+def align_and_merge(score_array1, score_array2):
+    """
+    Align two score note arrays using DTW and return a merged table with unique alignments.
+
+    Args:
+        score_array1 (np.ndarray): First score note array containing 'id' and other features.
+        score_array2 (np.ndarray): Second score note array containing 'onset_sec' and other features.
+
+    Returns:
+        pd.DataFrame: Merged DataFrame containing matched rows from both arrays.
+    """
+    # Extract relevant features for alignment
+    features1 = np.array([(note['pitch'], note['onset_beat']) for note in score_array1])
+    features2 = np.array([(note['pitch'], note['onset_sec']) for note in score_array2])
+
+    # Perform DTW to align the features
+    distance, path = fastdtw(features1, features2, dist=euclidean)
+
+    # Create a list of aligned rows
+    merged_rows = []
+    aligned_ids = set()  # To ensure one-to-one mapping
+
+    for idx1, idx2 in path:
+        # Skip duplicates in score_array1
+        if idx1 in aligned_ids:
+            continue
+
+        row1 = score_array1[idx1]
+        row2 = score_array2[idx2]
+
+        merged_row = {
+            "id": row1['id'],
+            "onset_beat": row1['onset_beat'],
+            "duration_beat": row1['duration_beat'],
+            "pitch": row1['pitch'],
+            "onset_sec": row2['onset_sec'],
+            "duration_sec": row2['duration_sec'],
+        }
+
+        merged_rows.append(merged_row)
+        aligned_ids.add(idx1)
+
+    # Convert to a DataFrame
+    merged_df = pd.DataFrame(merged_rows)
+
+    return merged_df
+
+
+
+def get_vienna422_segpoints(match_file, score_midi_path, midi_len=10):
+    # Load the match file to obtain performance and alignment data
+    performance, alignment, score = pt.load_match(match_file, create_score=True)
+    sna = score.note_array()
+    score_ = pt.load_performance_midi(score_midi_path)
+    sna_ = score_.note_array()
+    
+    if sna[0]['pitch'] == sna_[0]['pitch']:
+        beat_to_sec = sna_[0]['duration_sec'] / sna[0]['duration_beat']
+        onset_off = sna_[0]['onset_sec'] - sna[0]['onset_beat'] * beat_to_sec
+    
+    merged_table = pd.DataFrame(sna)
+    merged_table['onset_sec'] = merged_table['onset_beat'] * beat_to_sec + onset_off
+    merged_table['duration_sec'] = merged_table['duration_beat'] * beat_to_sec
+
+    # merged_table = align_and_merge(sna, sna_)
+
+    pna = performance.note_array()
+    alignment_mapping = {entry['score_id']: entry['performance_id'] for entry in alignment if entry['label'] == 'match'}
+
+    performance_df = pd.DataFrame(pna)
+    performance_df = performance_df.rename(columns={'id': 'performance_id'})
+    merged_table['performance_id'] = merged_table['id'].map(alignment_mapping)
+
+    # Merge merged_table with performance_df on performance_id
+    final_table = pd.merge(merged_table, performance_df, how='left', on='performance_id')
+    
+    final_table = final_table.dropna(subset=['onset_sec_x', 'onset_sec_y'])
+    
+    # Extract score times (in beats) and corresponding performance times (in seconds)
+    score_times = list(final_table['onset_sec_x']) + list(final_table['onset_sec_x'] + final_table['duration_sec_x'])
+    performance_times = list(final_table['onset_sec_y']) + list(final_table['onset_sec_y'] + final_table['duration_sec_y'])
+    
+    # Create an interpolation function mapping score time to performance time
+    interp_func = interp1d(score_times, performance_times, kind='nearest', fill_value='extrapolate')
+    
+    # Determine the total duration of the MIDI score in beats
+    total_score_time = score_times[-1]
+    
+    # Generate segmentation points at every 10 seconds of score time
+    seg_points_score_time = np.arange(0, total_score_time + midi_len, midi_len)
+    
+    # Map these segmentation points to performance time using the interpolation function
+    seg_points_performance_time = interp_func(seg_points_score_time)
+    
+    return seg_points_performance_time
+
+
+########################### BACHVIOLIN ###########################
+
+def get_bachviolin_segpoints(alignment_path, notes_path, midi_path, midi_len=10):
+    """
+    Compute segmentation points (segpoints) from alignment, notes, and MIDI files.
+
+    Args:
+        alignment_path (str): Path to the alignment CSV file.
+        notes_path (str): Path to the notes CSV file.
+        midi_path (str): Path to the MIDI file.
+        midi_interval (float): Interval (in MIDI seconds) for segmentation.
+
+    Returns:
+        np.ndarray: Array of segmentation points in performance audio seconds.
+    """
+    # Load alignment and notes
+    alignment_df = pd.read_csv(alignment_path)
+    notes_df = pd.read_csv(notes_path)
+
+    sna = pt.load_performance_midi(midi_path).note_array()
+
+    i = 0
+    while i < 3:
+        if sna[0]['pitch'] == notes_df['pitch'][i]:
+            beat_to_sec = sna[0]['duration_sec'] / (notes_df['offset'][i] - notes_df['onset'][i])
+            onset_off = sna[0]['onset_sec'] - notes_df['onset'][i] * beat_to_sec
+            break
+        else:
+            i += 1
+    
+    notes_df['onset_sec'] = notes_df['onset'] * beat_to_sec + onset_off
+    notes_df['offset_sec'] = notes_df['onset_sec'] + (notes_df['offset'][i] - notes_df['onset'][i]) * beat_to_sec
+
+    # Convert note onsets and offsets to MIDI seconds
+    # Determine total MIDI duration
+    total_midi_time = notes_df['offset_sec'].iloc[-1]
+
+    # concat alignment_df with notes_df directly
+    merged_table = pd.concat([alignment_df, notes_df], axis=1)
+
+    interp_func = interp1d(list(merged_table['onset_sec']) + list(merged_table['offset_sec']), 
+                           list(merged_table['start']) + list(merged_table['end']), 
+                           kind='nearest', fill_value='extrapolate')
+    performance_segpoints = interp_func(np.arange(0, total_midi_time + midi_len, midi_len))
+
+    return np.array(performance_segpoints)

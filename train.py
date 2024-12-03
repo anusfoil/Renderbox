@@ -3,6 +3,7 @@ import json
 import os
 import torch
 import pytorch_lightning as pl
+import wandb
 import random
 
 from stable_audio_tools.data.dataset import create_dataloader_from_config
@@ -71,7 +72,8 @@ def main():
 
     training_wrapper = create_training_wrapper_from_config(model_config, model)
 
-    wandb_logger = pl.loggers.WandbLogger(project=args.name)
+    wandb_settings = wandb.Settings(start_method="fork", init_timeout=300)  # Timeout in seconds (e.g., 300 seconds)
+    wandb_logger = pl.loggers.WandbLogger(project=args.name, settings=wandb_settings)
     wandb_logger.watch(training_wrapper)
 
     exc_callback = ExceptionCallback()
@@ -79,7 +81,7 @@ def main():
     if args.save_dir and isinstance(wandb_logger.experiment.id, str):
         checkpoint_dir = os.path.join(args.save_dir, wandb_logger.experiment.project, wandb_logger.experiment.id, "checkpoints") 
     else:
-        checkpoint_dir = None
+        checkpoint_dir = "tmp_save"
 
     ckpt_callback = pl.callbacks.ModelCheckpoint(every_n_train_steps=args.checkpoint_every, dirpath=checkpoint_dir, save_top_k=-1)
     save_model_config_callback = ModelConfigEmbedderCallback(model_config)

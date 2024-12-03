@@ -21,13 +21,14 @@ device = "cuda" if torch.cuda.is_available() else "cpu"
 #                                                "/home/intern-2024-04/SAO/stable_audio/harmonai_train/fm2kbxyx/checkpoints/epoch=482-step=2700.ckpt",
 #                                                )
 model_config_path = "/home/intern-2024-04/SAO/stable_audio/stable_audio_tools/configs/model_configs/txt2audio/stable_audio_3_0.json"
-dataloader_config_path = "/home/intern-2024-04/SAO/stable_audio/stable_audio_tools/configs/dataset_configs/stage_0_datasets.json"
-model, model_config = load_local_trained_model(model_config_path, 
-                                               "/home/intern-2024-04/SAO/stable_audio/harmonai_train/rlaqmgss/checkpoints/epoch=30-step=1700.ckpt",
-                                               )
+dataloader_config_path = "/home/intern-2024-04/SAO/stable_audio/stable_audio_tools/configs/dataset_configs/stage_4_datasets.json"
+# model, model_config = load_local_trained_model(model_config_path, 
+#                                                "/home/intern-2024-04/SAO/stable_audio/tmp_save/epoch=109-step=6000.ckpt",
+#                                             #    "/home/intern-2024-04/SAO/stable_audio/harmonai_train/n9gmvk7i/checkpoints/epoch=66-step=3700.ckpt",
+#                                                )
 
-model = model.to(device)
-hook()
+# model = model.to(device)
+# hook()
 
 with open(model_config_path) as f:
     model_config = json.load(f)
@@ -54,6 +55,10 @@ dataloader = create_dataloader_from_config(dataloader_config, batch_size=1, num_
 
 import warnings
 warnings.filterwarnings("ignore", category=FutureWarning)
+
+for i, data in enumerate(dataloader):
+    audio, info = data  # Unpack data
+hook()
 
 for i, data in enumerate(dataloader):
     audio, info = data  # Unpack data
@@ -114,7 +119,7 @@ for i, data in enumerate(dataloader):
     
     # Save MIDI input and ground truth audio
     audio = audio[0]
-    save_midi_and_wav("", "gt", info["midi"], codec, audio, sample_rate, output_folder=output_folder)
+    save_midi_and_wav("", "gt", info["midi"], codec, audio, sample_rate, output_folder=output_folder, synth_midi=True)
 
     
     print(f"Processed and saved output for example {i} at {output_folder}")
