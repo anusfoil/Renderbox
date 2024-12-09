@@ -21,7 +21,7 @@ from torchaudio import transforms as T
 from typing import Optional, Callable, List
 
 from .utils import Stereo, Mono, PhaseFlipper, PadCrop_Normalized_T
-from .midi_utils import preprocess, save_midi_and_wav
+from .midi_utils import preprocess, save_midi_and_wav, tokens_to_notes
 from .event_codec import Codec
 from .alignment_utils import asap_alignment_segpoint, get_yamahasax_segpoints, get_musicnet_segpoints, gaps_alignment_segpoint, get_vienna422_segpoints, get_bachviolin_segpoints
 
@@ -122,7 +122,10 @@ def get_metadata_info(dataset_id, base_path, metadata_row, codec, midi_len=10):
         audio_path = posixpath.join(base_path, metadata_row['audio_performance'])
         midi_path = posixpath.join(base_path, metadata_row['midi_score'])
         
-        alignment_path = audio_path.replace(".wav", "_corresp.txt")
+        if 'alignment_path' in metadata_row:
+            alignment_path = posixpath.join(base_path, metadata_row['alignment_path'])
+        else:
+            alignment_path = audio_path.replace(".wav", "_corresp.txt")
         
         if not os.path.exists(alignment_path):
             assert("midi_score" in audio_path) # synthesis
@@ -137,9 +140,11 @@ def get_metadata_info(dataset_id, base_path, metadata_row, codec, midi_len=10):
         
         
         if "midi_score" in audio_path:
-            prompt_dict['perf'] = ", plain synthesis"
+            prompt_dict['perf'] = "plain synthesis"
+        elif "mistake" in audio_path:
+            prompt_dict['perf'] = random.choice(["performance with mistakes", "student playing", "error"])
         else:
-            prompt_dict['perf'] = ", expressive performance"
+            prompt_dict['perf'] = "expressive performance"
         
         prompt_dict['instrument'] = "Piano"
         
@@ -180,7 +185,11 @@ def get_metadata_info(dataset_id, base_path, metadata_row, codec, midi_len=10):
             
             segpoints = gaps_alignment_segpoint(alignment_dir_path, midi_len=midi_len)
         else:
-            segpoints = np.arange(0, 1000, midi_len)
+            speed_midi_len = midi_len
+            if "speed_ratio" in metadata_row: # alignment for the ones that's speed-augmented
+                speed_midi_len = midi_len * metadata_row['speed_ratio']
+                
+            segpoints = np.arange(0, 1000, speed_midi_len)
             
         prompt_dict['instrument'] = "Guitar"
         prompt_dict['perf'] = "Expressive performance"
@@ -203,7 +212,11 @@ def get_metadata_info(dataset_id, base_path, metadata_row, codec, midi_len=10):
                 print(f"Error in {audio_path}")
                 return None, None, None, None, None
         else:
-            segpoints = np.arange(0, 1000, midi_len)
+            speed_midi_len = midi_len
+            if "speed_ratio" in metadata_row: # alignment for the ones that's speed-augmented
+                speed_midi_len = midi_len * metadata_row['speed_ratio']
+                
+            segpoints = np.arange(0, 1000, speed_midi_len)
             
         prompt_dict['instrument'] = metadata_row['instrumentation'] if 'instrumentation' in metadata_row else ""
         prompt_dict['title'] = metadata_row['score_midi_path'].split("/")[1] + ", " + (metadata_row['piece'] if 'piece' in metadata_row else "")
@@ -235,9 +248,8 @@ def get_metadata_info(dataset_id, base_path, metadata_row, codec, midi_len=10):
         segpoints = get_vienna422_segpoints(alignment_path, midi_path, midi_len=midi_len)
         
         prompt_dict['instrument'] = "Piano"
-        prompt_dict['perf'] = "Expressive performance"
+        prompt_dict['perf'] = f"Expressive performance, style of {metadata_row['performer_label']}"
         prompt_dict['title'] = metadata_row['audio_path'].split("/")[-2]
-        prompt_dict['performer'] = metadata_row['performer_label']
 
     if dataset_id == 'bachviolin':
         
@@ -292,31 +304,37 @@ def tier_speed_description(speed_ratio):
     else:
         return random.choice(SPEED_TIERS["very fast"])
 
-def sample_prompt(prompt_dict, dummy_prompt=False):
+def sample_prompt(prompt_dict, prompt_stage=0):
     """
     prompt have several fields, perf and speed are required and the rest of the fields are sampled with 0.5 probability.
     Then they are concatenated with random order
     """
     
-    if dummy_prompt:
+    if prompt_stage == 0:
         return "synthesis"
+    if prompt_stage == 1:
+        keywords = ['synthesis', prompt_dict['speed']]
+        random.shuffle(keywords)  # Shuffle the keywords in place
+        return ", ".join(keywords)  # Join the shuffled keywords with a space
+    else:
+        # for prompt stage 3 and 4, the 'perf' field will include the instruction "mistakes", "performer id" or description
+        required_fields = ['perf', 'speed']
+            
+        sampled_fields = {field: prompt_dict[field] for field in required_fields if field in prompt_dict}
 
-    required_fields = ['perf', 'speed']
-    sampled_fields = {field: prompt_dict[field] for field in required_fields if field in prompt_dict}
+        optional_fields = {
+            field: prompt_dict[field]
+            for field in prompt_dict
+            if field not in required_fields and random.random() < 0.5
+        }
 
-    optional_fields = {
-        field: prompt_dict[field]
-        for field in prompt_dict
-        if field not in required_fields and random.random() < 0.5
-    }
+        combined_fields = list(sampled_fields.values()) + list(optional_fields.values())
 
-    combined_fields = list(sampled_fields.values()) + list(optional_fields.values())
+        random.shuffle(combined_fields)
 
-    random.shuffle(combined_fields)
-
-    prompt = ", ".join(combined_fields)
-    
-    return prompt
+        prompt = ", ".join(combined_fields)
+        
+        return prompt
 
 
 
@@ -466,7 +484,7 @@ class SampleDatasetChunk(torch.utils.data.Dataset):
         midi_length=10,
         force_channels="stereo",
         split="train",
-        dummy_prompt=False
+        prompt_stage=0
     ):
         super().__init__()
         
@@ -492,7 +510,7 @@ class SampleDatasetChunk(torch.utils.data.Dataset):
         )
 
         self.sr = sample_rate
-        self.dummy_prompt = dummy_prompt
+        self.prompt_stage = prompt_stage
 
         # load from the segmentation points to determine the boundaries of segments
         self.boundaries = [0]
@@ -523,11 +541,11 @@ class SampleDatasetChunk(torch.utils.data.Dataset):
                 meta_iter = chain(metadata.iterrows(), metadata_augmented.iterrows())
                                             
             for id, row in meta_iter:
-                try:
-                    audio_path, midi_tokens, segpoints, num_chunks, prompt_dict = get_metadata_info(config.id, config.path, row, self.codec, midi_len=self.midi_length)
-                except Exception as e:
-                    print(f'Error in {config.id}, {config.path}, {row}: {e}')
-                    continue
+                # try:
+                audio_path, midi_tokens, segpoints, num_chunks, prompt_dict = get_metadata_info(config.id, config.path, row, self.codec, midi_len=self.midi_length)
+                # except Exception as e:
+                #     print(f'Error in {row.to_dict()}: {e}')
+                #     continue
 
                 
                 if type(segpoints) == type(None):
@@ -538,6 +556,8 @@ class SampleDatasetChunk(torch.utils.data.Dataset):
                     (audio_path, midi_tokens, segpoints, prompt_dict)
                 ) 
                 # print(len(self.data_list)-1, audio_path)
+            
+            print(f"Loaded {config.id} with {len(self.data_list)} files, boundaries: {self.boundaries[-1]}")
                 
         
         print(f'Found {len(self.data_list)} files, total number of chunks: {self.boundaries[-1]}')    
@@ -602,12 +622,12 @@ class SampleDatasetChunk(torch.utils.data.Dataset):
             
             # update the text prompt based on speed ratio
             prompt_dict['speed'] = tier_speed_description(seconds_total / self.midi_length)
-            info['prompt'] = sample_prompt(prompt_dict, dummy_prompt=self.dummy_prompt)
+            info['prompt'] = sample_prompt(prompt_dict, prompt_stage=self.prompt_stage)
 
             # if random.random() < 0.01:
-            #     print(info['prompt'])
+            #     # print(info['prompt'])
             #     save_midi_and_wav(file_idx, chunk_idx, info["midi"], self.codec, audio, self.sr)
-            save_midi_and_wav(audio_path.split("/")[-1][:-4], chunk_idx, info["midi"], self.codec, audio, self.sr)
+            # save_midi_and_wav(audio_path.split("/")[-1][:-4], chunk_idx, info["midi"], self.codec, audio, self.sr)
             
                 
             info['file_idx'] = file_idx
@@ -643,6 +663,7 @@ def midi_to_tokens(midi_path, codec, midi_length=10):
     # get the first 10 seconds of midi 
     tokens, _ = preprocess( ns, segment_length=midi_length, codec=codec)
 
+    # print([f"{codec.decode_event_index(x.item()).type}_{codec.decode_event_index(x.item()).value}" for x in tokens[0]])
     return tokens
 
 
@@ -726,7 +747,7 @@ def create_dataloader_from_config(dataset_config, batch_size, sample_size, sampl
                 midi_length=dataset_config.get("midi_length", 10),
                 force_channels=force_channels,
                 split=split,
-                dummy_prompt=dataset_config.get("dummy_prompt", False)
+                prompt_stage=dataset_config.get("prompt_stage", 0)
             )
         else:
             train_set = SampleDataset(

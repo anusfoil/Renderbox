@@ -1,18 +1,7 @@
 {
     "dataset_type": "audio_dir",
     "datasets": [
-        {
-            "id": "gaps",
-            "path": "/work/gaps_v1",
-            "metadata_path": "/work/gaps_v1/metadata_synth.csv",
-            "custom_metadata_module": "/home/intern-2024-04/SAO/stable_audio/stable_audio_tools/configs/dataset_configs/custom_metadata/asap_custom_md.py"
-        },
-        {
-            "id": "asap",
-            "path": "/work/asap-dataset",
-            "metadata_path": "/work/asap-dataset/metadata_synth.csv",
-            "custom_metadata_module": "/home/intern-2024-04/SAO/stable_audio/stable_audio_tools/configs/dataset_configs/custom_metadata/asap_custom_md.py"
-        },
+
         {
             "id": "musicnet",
             "path": "/work/musicnet",
@@ -23,5 +12,5 @@
     "random_crop": false,
     "midi_length": 10,
     "use_chunks": true,
-    "dummy_prompt": true
+    "prompt_stage": 0
 }

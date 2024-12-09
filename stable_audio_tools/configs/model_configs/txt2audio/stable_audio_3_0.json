@@ -54,7 +54,7 @@
                     "id": "midi",
                     "type": "midi",
                     "config": {
-                        "max_length": 2400,
+                        "max_length": 4000,
                         "midi_embedding_dim": 768,
                         "midi_vocab_size": 1390
                     }

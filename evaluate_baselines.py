@@ -1,8 +1,4 @@
 import os, json, parser
-import torch
-import torchaudio
-from einops import rearrange
-
 from stable_audio_tools.data.dataset import create_dataloader_from_config
 from stable_audio_tools.data.midi_utils import save_midi_and_wav
 from stable_audio_tools.data.event_codec import Codec
@@ -11,7 +7,8 @@ import warnings
 warnings.filterwarnings("ignore", category=FutureWarning)
 
 import hook
-
+import torch
+import torchaudio
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
 
@@ -22,6 +19,7 @@ def import_by_envs(args):
     if args.baseline == "midi_ddsp":
         print("don't forget to use the environment 'mdenv'! ")
         from midi_ddsp import synthesize_midi, load_pretrained_model
+        return synthesize_midi, load_pretrained_model
     elif args.baseline == "coco_mulla":
         print("don't forget to use the environment 'cmenv'! ")
         pass
@@ -29,9 +27,10 @@ def import_by_envs(args):
         print("don't forget to use the environment 'mgenv'! ")
         from audiocraft.models import MusicGen
         from audiocraft.data.audio import audio_write
+        return MusicGen, audio_write
 
 
-def main(args):
+def main(args, modules):
 
     dataloader_config_path = f"/home/intern-2024-04/SAO/stable_audio/stable_audio_tools/configs/dataset_configs/stage_{args.stage}_datasets.json"
 
@@ -95,7 +94,8 @@ def main(args):
             f.write("chunk_idx: " + str(info['chunk_idx']))
         
         if args.baseline == "midi_ddsp":
-                       
+            synthesize_midi, load_pretrained_model = modules
+            
             midi_file = os.path.join(output_folder, 'gt.mid')
             synthesis_generator, expression_generator = load_pretrained_model()
             output = synthesize_midi(synthesis_generator, expression_generator, 
@@ -114,6 +114,8 @@ def main(args):
         
         
         elif args.baseline == "musicgen_melody":
+            MusicGen, audio_write = modules
+            
             model = MusicGen.get_pretrained('melody')
             model.set_generation_params(duration=20)  # generate 8 seconds.
 
@@ -127,9 +129,6 @@ def main(args):
             save_path = os.path.join(output_folder, f'output.wav')
             audio_write(save_path, wav[0].cpu(), model.sample_rate, strategy="loudness")
 
-
-        hook()
-
         
         print(f"Processed and saved output for example {i} at {output_folder}")
 
@@ -142,5 +141,5 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
     
-    import_by_envs(args)
-    main(args)
+    modules = import_by_envs(args)
+    main(args, modules)
