@@ -5,7 +5,7 @@ import os
 import posixpath
 import random
 import re
-import subprocess
+from tqdm import tqdm
 from itertools import chain
 import time
 import torch
@@ -23,7 +23,7 @@ from typing import Optional, Callable, List
 from .utils import Stereo, Mono, PhaseFlipper, PadCrop_Normalized_T
 from .midi_utils import preprocess, save_midi_and_wav, tokens_to_notes
 from .event_codec import Codec
-from .alignment_utils import asap_alignment_segpoint, get_yamahasax_segpoints, get_musicnet_segpoints, gaps_alignment_segpoint, get_vienna422_segpoints, get_bachviolin_segpoints
+from .alignment_utils import asap_alignment_segpoint, get_yamahasax_segpoints, get_musicnet_segpoints, gaps_alignment_segpoint, get_vienna422_segpoints, get_bachviolin_segpoints, get_conespresione_segpoints
 
 AUDIO_KEYS = ("flac", "wav", "mp3", "m4a", "ogg", "opus")
 
@@ -265,6 +265,22 @@ def get_metadata_info(dataset_id, base_path, metadata_row, codec, midi_len=10):
         prompt_dict['title'] = metadata_row['score_midi_path'].split("/")[-2]
         prompt_dict['performer'] = metadata_row['audio_path'].split("/")[-2]  
         
+    if dataset_id == 'conespressione':
+        import warnings
+        warnings.filterwarnings("ignore", category=UserWarning)
+
+        audio_path = posixpath.join(base_path, metadata_row['audio_path'])
+        midi_path = posixpath.join(base_path, metadata_row['score_midi_path'])
+        alignment_path = posixpath.join(base_path, metadata_row['alignment_path'])     
+        
+        segpoints =  get_conespresione_segpoints(alignment_path, midi_path, midi_len=midi_len)
+        
+        prompt_dict['instrument'] = "Piano"
+        prompt_dict['perf'] = f"Expressive performance, style of {metadata_row['performer']}"
+        prompt_dict['title'] = metadata_row['piece_name']
+        prompt_dict['description'] = metadata_row['answer']
+        
+    
     if type(segpoints) == type(None):
         return None, None, None, None, None
     
@@ -317,7 +333,7 @@ def sample_prompt(prompt_dict, prompt_stage=0):
         random.shuffle(keywords)  # Shuffle the keywords in place
         return ", ".join(keywords)  # Join the shuffled keywords with a space
     else:
-        # for prompt stage 3 and 4, the 'perf' field will include the instruction "mistakes", "performer id" or description
+        # for prompt stage 2, 3 and 4, the 'perf' field will include the instruction "mistakes", "performer id" or description
         required_fields = ['perf', 'speed']
             
         sampled_fields = {field: prompt_dict[field] for field in required_fields if field in prompt_dict}
@@ -326,7 +342,7 @@ def sample_prompt(prompt_dict, prompt_stage=0):
             field: prompt_dict[field]
             for field in prompt_dict
             if field not in required_fields and random.random() < 0.5
-        }
+        } # instrumentation, title, composer, ...
 
         combined_fields = list(sampled_fields.values()) + list(optional_fields.values())
 
@@ -540,12 +556,12 @@ class SampleDatasetChunk(torch.utils.data.Dataset):
                 
                 meta_iter = chain(metadata.iterrows(), metadata_augmented.iterrows())
                                             
-            for id, row in meta_iter:
-                # try:
-                audio_path, midi_tokens, segpoints, num_chunks, prompt_dict = get_metadata_info(config.id, config.path, row, self.codec, midi_len=self.midi_length)
-                # except Exception as e:
-                #     print(f'Error in {row.to_dict()}: {e}')
-                #     continue
+            for id, row in tqdm(meta_iter):
+                try:
+                    audio_path, midi_tokens, segpoints, num_chunks, prompt_dict = get_metadata_info(config.id, config.path, row, self.codec, midi_len=self.midi_length)
+                except Exception as e:
+                    print(f'Error in {row.to_dict()}: {e}')
+                    continue
 
                 
                 if type(segpoints) == type(None):
@@ -627,8 +643,8 @@ class SampleDatasetChunk(torch.utils.data.Dataset):
             # if random.random() < 0.01:
             #     # print(info['prompt'])
             #     save_midi_and_wav(file_idx, chunk_idx, info["midi"], self.codec, audio, self.sr)
-            # save_midi_and_wav(audio_path.split("/")[-1][:-4], chunk_idx, info["midi"], self.codec, audio, self.sr)
-            
+            save_midi_and_wav(audio_path.split("/")[-1][:-4], chunk_idx, info["midi"], self.codec, audio, self.sr)
+            print(info['prompt'])
                 
             info['file_idx'] = file_idx
             info['chunk_idx'] = chunk_idx

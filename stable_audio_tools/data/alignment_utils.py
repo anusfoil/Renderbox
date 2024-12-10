@@ -548,3 +548,60 @@ def get_bachviolin_segpoints(alignment_path, notes_path, midi_path, midi_len=10)
     performance_segpoints = interp_func(np.arange(0, total_midi_time + midi_len, midi_len))
 
     return np.array(performance_segpoints)
+
+
+########################### CONESPRESSIONE ###########################
+
+def get_conespresione_segpoints(match_file, score_midi_path=None, midi_len=10):
+    """
+    Generate segmentation points by aligning score time (beats) with performance time (seconds).
+    
+    Parameters:
+    - match_file: str, path to the match file containing score_time_(beats) and performance_time_(seconds).
+    - score_midi_path: str, optional, path to the MIDI score for tempo adjustments.
+    - default_tempo: float, default tempo in BPM if score MIDI is not provided.
+    - seg_interval: float, interval in score time (seconds) for generating segmentation points.
+    
+    Returns:
+    - seg_points_performance_time: numpy array of segmentation points in performance time (seconds).
+    """
+    # Step 1: Load and parse the match file
+    score_times = []
+    performance_times = []
+    with open(match_file, 'r') as f:
+        for line in f:
+            if "#" in line:
+                continue
+            if line.strip():
+                score_time, perf_time = map(float, line.strip().split(','))
+                score_times.append(score_time)
+                performance_times.append(perf_time)
+    
+    # Convert to numpy arrays
+    score_times = np.array(score_times)
+    performance_times = np.array(performance_times)
+    
+    # Step 2: Handle tempo adjustments (if MIDI score is provided)
+    if score_midi_path:
+        # Load the MIDI file
+        score = pt.load_performance_midi(score_midi_path)
+        score_note_array = score.note_array()
+        score_ = pt.load_score_midi(score_midi_path)
+        score_note_array_ = score_.note_array()
+
+        if score_note_array[0]['pitch'] == score_note_array_[0]['pitch']:
+            beat_to_sec = score_note_array[0]['duration_sec'] / score_note_array_[0]['duration_beat']
+            onset_offset = score_note_array[0]['onset_sec'] - score_note_array_[0]['onset_beat'] * beat_to_sec
+        
+        # Adjust score times based on tempo and offset
+        score_times = score_times * beat_to_sec + onset_offset
+
+    # Step 3: Create interpolation function
+    interp_func = interp1d(score_times, performance_times, kind='nearest', fill_value="extrapolate")
+
+    # Step 4: Generate segmentation points
+    total_score_time = score_times[-1]
+    seg_points_score_time = np.arange(0, total_score_time + midi_len, midi_len)
+    seg_points_performance_time = interp_func(seg_points_score_time)
+
+    return seg_points_performance_time

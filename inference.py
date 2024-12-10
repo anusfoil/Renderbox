@@ -21,9 +21,9 @@ device = "cuda" if torch.cuda.is_available() else "cpu"
 #                                                "/home/intern-2024-04/SAO/stable_audio/harmonai_train/fm2kbxyx/checkpoints/epoch=482-step=2700.ckpt",
 #                                                )
 model_config_path = "/home/intern-2024-04/SAO/stable_audio/stable_audio_tools/configs/model_configs/txt2audio/stable_audio_3_0.json"
-dataloader_config_path = "/home/intern-2024-04/SAO/stable_audio/stable_audio_tools/configs/dataset_configs/stage_3_datasets.json"
+dataloader_config_path = "/home/intern-2024-04/SAO/stable_audio/stable_audio_tools/configs/dataset_configs/stage_4_datasets.json"
 # model, model_config = load_local_trained_model(model_config_path, 
-#                                                "/home/intern-2024-04/SAO/stable_audio/tmp_save/epoch=339-step=18700.ckpt",
+#                                                "/home/intern-2024-04/SAO/stable_audio/harmonai_train/yf1220yb/checkpoints/epoch=353-step=20600.ckpt",
 #                                             #    "/home/intern-2024-04/SAO/stable_audio/harmonai_train/n9gmvk7i/checkpoints/epoch=66-step=3700.ckpt",
 #                                                )
 
