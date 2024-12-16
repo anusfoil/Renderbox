@@ -3,7 +3,7 @@ import mido
 import numpy as np
 import pandas as pd
 import partitura as pt
-from fastdtw import fastdtw
+# from fastdtw import fastdtw
 from scipy.spatial.distance import euclidean
 from scipy.interpolate import interp1d
 
@@ -595,6 +595,15 @@ def get_conespresione_segpoints(match_file, score_midi_path=None, midi_len=10):
         
         # Adjust score times based on tempo and offset
         score_times = score_times * beat_to_sec + onset_offset
+        
+        if not np.isclose(score_times[-1], score_note_array[-1]['onset_sec'], rtol=0.1):
+            print(f"Warning: Score times do not match the last note onset time: {score_times[-1]} vs {score_note_array[-1]['onset_sec']}")
+            # use the last score onset to compute the ratio
+            beat_to_sec =  score_note_array[-1]['onset_sec'] / score_times[-1]
+            onset_offset = score_note_array[0]['onset_sec'] - score_note_array_[0]['onset_beat'] * beat_to_sec
+            
+        score_times = score_times * beat_to_sec + onset_offset
+        
 
     # Step 3: Create interpolation function
     interp_func = interp1d(score_times, performance_times, kind='nearest', fill_value="extrapolate")
@@ -605,3 +614,35 @@ def get_conespresione_segpoints(match_file, score_midi_path=None, midi_len=10):
     seg_points_performance_time = interp_func(seg_points_score_time)
 
     return seg_points_performance_time
+
+########################### ATEPP ###########################
+
+def get_atepp_segpoints(corresp_file, midi_len=10):
+    """
+    Generate segmentation points by aligning score time (beats) with performance time (seconds).
+    
+    Parameters:
+    - match_file: str, path to the match file containing score_time_(beats) and performance_time_(seconds).
+    - score_midi_path: str, optional, path to the MIDI score for tempo adjustments.
+    
+    Returns:
+    - seg_points_performance_time: numpy array of segmentation points in performance time (seconds).
+    """
+    
+    corresp = pd.read_csv(corresp_file, sep='\t', index_col=False, skiprows=[0], names=['alignID', 'alignOntime', 'alignSitch', 'alignPitch', 'alignOnvel', 'refID', 'refOntime', 'refSitch', 'refPitch', 'refOnvel'])
+
+    corresp = corresp[(corresp['refOntime'] != -1) & (corresp['alignOntime'] != -1)]
+    performance_times = corresp['alignOntime'].values
+    score_times = corresp['refOntime'].values
+    
+
+    # Step 3: Create interpolation function
+    interp_func = interp1d(score_times, performance_times, kind='nearest', fill_value="extrapolate")
+
+    # Step 4: Generate segmentation points
+    total_score_time = score_times[-1]
+    seg_points_score_time = np.arange(0, total_score_time + midi_len, midi_len)
+    seg_points_performance_time = interp_func(seg_points_score_time)
+
+    return seg_points_performance_time
+

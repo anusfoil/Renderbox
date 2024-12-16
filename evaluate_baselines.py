@@ -15,7 +15,6 @@ device = "cuda" if torch.cuda.is_available() else "cpu"
 
 
 
-
 def import_by_envs(args):
     if args.baseline == "midi_ddsp":
         print("don't forget to use the environment 'mdenv'! ")
@@ -47,8 +46,11 @@ def main(args, modules):
     resolution = 100
     codec = Codec(int(midi_length * resolution + 1))
 
-    dataloader = create_dataloader_from_config(dataloader_config, batch_size=1, num_workers=3, sample_rate=sample_rate, sample_size=sample_size, audio_channels=2, 
-                                            split='train'
+    # seed
+    torch.manual_seed(42)
+    torch.cuda.manual_seed(42)
+    dataloader = create_dataloader_from_config(dataloader_config, batch_size=1, num_workers=1, sample_rate=sample_rate, sample_size=sample_size, audio_channels=2, 
+                                            split='test'
                                             )
 
     if args.baseline == "musicgen_melody":
@@ -71,6 +73,10 @@ def main(args, modules):
 
 
     for i, data in enumerate(dataloader):
+        
+        if i < 22 or i >= 42:
+            continue
+        
         audio, info = data  # Unpack data
         info = info[0]  # Unpack info
         condition = {
@@ -102,7 +108,6 @@ def main(args, modules):
         # Save MIDI input and ground truth audio
         audio = audio[0]
         save_midi_and_wav("", "gt", info["midi"], codec, audio, sample_rate, output_folder=output_folder, synth_midi=True)
-
             
         # save metadata to text file
         metadata_file = os.path.join(output_folder, "meta.txt")
@@ -118,18 +123,21 @@ def main(args, modules):
             synthesis_generator, expression_generator = load_pretrained_model()
             output = synthesize_midi(synthesis_generator, expression_generator, 
                                      midi_file, speed_rate=(10 / condition["seconds_total"]),
-                                     use_fluidsynth=True, sf2_path='/work/GeneralUser-GS.sf2',
+                                     use_fluidsynth=False, sf2_path='/work/GeneralUser-GS.sf2',
                                     output_dir = output_folder, save_metadata=True)  # it will be called 'mix.wav' in the output folder
-            
             
         elif args.baseline == "coco_mulla":
             os.system(f"CUDA_VISIBLE_DEVICES=1 python /home/intern-2024-04/coco-mulla-repo/inference.py --num_layers=48 --latent_dim=12 \
                     --output_folder={output_folder} \
                     --model_path=/home/intern-2024-04/coco-mulla-repo/diff_9_end.pth \
                     --midi_path={os.path.join(output_folder, 'gt.mid')} \
+                    --audio_path='' \
+                    --chord_path='/home/intern-2024-04/SAO/dummy.txt' \
                     --prompt_path={prompt_file} \
-                    --offset=0  ")
-        
+                    --offset=0  \
+                    --sec={info['seconds_total']}")  
+            # change names
+            os.rename(os.path.join(output_folder, 'chord-drums-midi.wav'), os.path.join(output_folder, 'output.wav'))     
         
         elif args.baseline == "musicgen_melody":
 

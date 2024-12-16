@@ -30,7 +30,7 @@ class PadCrop_Normalized_T(nn.Module):
         self.randomize = randomize
 
     def __call__(self, source: torch.Tensor, optional_start_seconds = None, optional_end_seconds = None ) -> Tuple[torch.Tensor, float, float, int, int]:
-        
+                
         n_channels, n_samples = source.shape
 
         # If the audio is shorter than the desired length, pad it
@@ -61,7 +61,10 @@ class PadCrop_Normalized_T(nn.Module):
         chunk = source.new_zeros([n_channels, self.n_samples])
 
         # Copy the audio into the chunk
-        chunk[:, :min(dur_samples, n_samples - offset)] = source[:, offset:offset + dur_samples]
+        try:
+            chunk[:, :min(dur_samples, n_samples - offset)] = source[:, offset:offset + dur_samples]
+        except Exception as e:
+            raise e
         
         # Calculate the start and end times of the chunk in seconds
         seconds_start = math.floor(offset / self.sample_rate)
