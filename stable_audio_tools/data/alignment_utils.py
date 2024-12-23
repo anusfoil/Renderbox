@@ -3,7 +3,7 @@ import mido
 import numpy as np
 import pandas as pd
 import partitura as pt
-# from fastdtw import fastdtw
+from fastdtw import fastdtw
 from scipy.spatial.distance import euclidean
 from scipy.interpolate import interp1d
 

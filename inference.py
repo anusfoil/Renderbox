@@ -18,12 +18,12 @@ stage = "0"
 model_config_path = "/home/intern-2024-04/SAO/stable_audio/stable_audio_tools/configs/model_configs/txt2audio/stable_audio_3_0.json"
 dataloader_config_path = f"/home/intern-2024-04/SAO/stable_audio/stable_audio_tools/configs/dataset_configs/stage_{stage}_datasets.json"
 model, model_config = load_local_trained_model(model_config_path, 
-                                            #    "/home/intern-2024-04/SAO/stable_audio/harmonai_train/e3byx7nb/checkpoints/epoch=380-step=26500.ckpt",
-                                               "/home/intern-2024-04/SAO/stable_audio/harmonai_train/n9gmvk7i/checkpoints/epoch=347-step=19100.ckpt",
+                                               "/home/intern-2024-04/SAO/stable_audio/harmonai_train/nx26r1rc/checkpoints/epoch=567-step=41300.ckpt",
+                                            #    "/home/intern-2024-04/SAO/stable_audio/harmonai_train/n9gmvk7i/checkpoints/epoch=347-step=19100.ckpt",
                                                )
 
 model = model.to(device)
-# hook()
+hook()
 
 with open(model_config_path) as f:
     model_config = json.load(f)
@@ -44,7 +44,10 @@ midi_length = dataloader_config["midi_length"]
 resolution = 100
 codec = Codec(int(midi_length * resolution + 1))
 
-dataloader = create_dataloader_from_config(dataloader_config, batch_size=1, num_workers=3, sample_rate=sample_rate, sample_size=sample_size, audio_channels=2, 
+# seed
+torch.manual_seed(42)
+torch.cuda.manual_seed(42)
+dataloader = create_dataloader_from_config(dataloader_config, batch_size=1, num_workers=1, sample_rate=sample_rate, sample_size=sample_size, audio_channels=2, 
                                            split='test'
                                            )
 
@@ -56,6 +59,7 @@ warnings.filterwarnings("ignore", category=FutureWarning)
 # hook()
 
 for i, data in enumerate(dataloader):
+    
     audio, info = data  # Unpack data
     info = info[0]  # Unpack info
     condition = {
@@ -64,6 +68,10 @@ for i, data in enumerate(dataloader):
         "seconds_total": info["seconds_total"],
         "midi": info["midi"]
     }
+    
+    if info['seconds_total'] != 10.0:
+        print(info['seconds_start'], info['seconds_total'], info['audio_path'])
+        continue
     
     output_folder = os.path.join(f"outputs/stage_{stage}_renderbox", str(i))
     os.makedirs(output_folder, exist_ok=True)

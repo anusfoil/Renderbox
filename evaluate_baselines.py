@@ -10,7 +10,8 @@ import hook
 import torch
 import torchaudio
 from einops import rearrange
-device = "cuda" if torch.cuda.is_available() else "cpu"
+import numpy as np
+import random
 
 
 
@@ -49,6 +50,10 @@ def main(args, modules):
     # seed
     torch.manual_seed(42)
     torch.cuda.manual_seed(42)
+    torch.backends.cudnn.deterministic = True
+    np.random.seed(42)
+    random.seed(42)
+    
     dataloader = create_dataloader_from_config(dataloader_config, batch_size=1, num_workers=1, sample_rate=sample_rate, sample_size=sample_size, audio_channels=2, 
                                             split='test'
                                             )
@@ -57,6 +62,8 @@ def main(args, modules):
         MusicGen, audio_write = modules
         
         model = MusicGen.get_pretrained('melody')
+        torch.manual_seed(42)
+        torch.cuda.manual_seed(42)
         
     elif args.baseline == "stable-audio-open":
         from stable_audio_tools import get_pretrained_model
@@ -68,17 +75,43 @@ def main(args, modules):
         model, model_config = get_pretrained_model("stabilityai/stable-audio-open-1.0")
         sample_rate = model_config["sample_rate"]
         sample_size = model_config["sample_size"]
-
         model = model.to(device)
-
+        torch.manual_seed(42)
+        torch.cuda.manual_seed(42)
+        
+        
+    elif args.baseline == "renderbox":
+        from stable_audio_tools.models.pretrained import load_local_trained_model
+        from stable_audio_tools.inference.generation import generate_diffusion_cond
+        
+        model_config_path = "/home/intern-2024-04/SAO/stable_audio/stable_audio_tools/configs/model_configs/txt2audio/stable_audio_3_0.json"
+        dataloader_config_path = f"/home/intern-2024-04/SAO/stable_audio/stable_audio_tools/configs/dataset_configs/stage_{args.stage}_datasets.json"
+        model, model_config = load_local_trained_model(model_config_path, 
+                                                    #    "/home/intern-2024-04/SAO/stable_audio/harmonai_train/u8wthilg/checkpoints/epoch=386-step=28300.ckpt",
+                                                    "/home/intern-2024-04/SAO/stable_audio/harmonai_train/n9gmvk7i/checkpoints/epoch=347-step=19100.ckpt",
+                                                    )
+        sample_rate = model_config["sample_rate"]
+        sample_size = model_config["sample_size"]
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        model = model.to(device)
+        torch.manual_seed(42)
+        torch.cuda.manual_seed(42)
 
     for i, data in enumerate(dataloader):
         
-        if i < 22 or i >= 42:
+        
+        if i > 500:
             continue
         
         audio, info = data  # Unpack data
         info = info[0]  # Unpack info
+        
+        if info['seconds_total'] == 0:
+            continue
+        
+        # print(info['audio_path'], info['file_idx'], info['chunk_idx'])
+        # continue
+        
         condition = {
             "prompt": info["prompt"],
             "seconds_start": info["seconds_start"],
@@ -127,7 +160,7 @@ def main(args, modules):
                                     output_dir = output_folder, save_metadata=True)  # it will be called 'mix.wav' in the output folder
             
         elif args.baseline == "coco_mulla":
-            os.system(f"CUDA_VISIBLE_DEVICES=1 python /home/intern-2024-04/coco-mulla-repo/inference.py --num_layers=48 --latent_dim=12 \
+            os.system(f"CUDA_VISIBLE_DEVICES=0 python /home/intern-2024-04/coco-mulla-repo/inference.py --num_layers=48 --latent_dim=12 \
                     --output_folder={output_folder} \
                     --model_path=/home/intern-2024-04/coco-mulla-repo/diff_9_end.pth \
                     --midi_path={os.path.join(output_folder, 'gt.mid')} \
@@ -137,16 +170,16 @@ def main(args, modules):
                     --offset=0  \
                     --sec={info['seconds_total']}")  
             # change names
-            os.rename(os.path.join(output_folder, 'chord-drums-midi.wav'), os.path.join(output_folder, 'output.wav'))     
+            os.rename(os.path.join(output_folder, 'chord-drums-midi.wav'), os.path.join(output_folder, 'output.wav'))  
         
         elif args.baseline == "musicgen_melody":
 
             model.set_generation_params(duration=info['seconds_total']) 
-            descriptions = info["prompt"].split(", ")
+            descriptions = info["prompt"]
 
             melody_file = os.path.join(output_folder, 'gt.wav')
             melody, sr = torchaudio.load(melody_file)
-            wav = model.generate_with_chroma(descriptions, melody[None], sr)
+            wav = model.generate_with_chroma([descriptions], melody[None], sr)
 
             # Will save under {idx}.wav, with loudness normalization at -14 db LUFS.
             save_path = os.path.join(output_folder, f'output')
@@ -156,7 +189,7 @@ def main(args, modules):
 
             # Set up text and timing conditioning
             conditioning = [{
-                "prompt": info["prompt"].split(", "),
+                "prompt": info["prompt"],
                 "seconds_start": 0, 
                 "seconds_total": info["seconds_total"],
             }]
@@ -180,7 +213,38 @@ def main(args, modules):
             # Peak normalize, clip, convert to int16, and save to file
             output = output.to(torch.float32).div(torch.max(torch.abs(output))).clamp(-1, 1).mul(32767).to(torch.int16).cpu()
             torchaudio.save(os.path.join(output_folder, f'output.wav'), output, sample_rate)
+            
+        elif args.baseline == "renderbox":
 
+            condition = {
+                "prompt": info["prompt"],
+                "seconds_start": info["seconds_start"],
+                "seconds_total": info["seconds_total"],
+                "midi": info["midi"]
+            }
+
+            print(info['audio_path'], info['file_idx'], info['chunk_idx'])
+                
+            # Generate stereo audio
+            output = generate_diffusion_cond(
+                model,
+                steps=100,
+                cfg_scale=7,
+                conditioning=[condition],
+                sample_size=sample_size,
+                sigma_min=0.3,
+                sigma_max=500,
+                sampler_type="dpmpp-3m-sde",
+                device=device
+            )
+            
+            # Rearrange audio batch to a single sequence
+            output = rearrange(output, "b d n -> d (b n)")
+            
+            # Peak normalize, clip, convert to int16, and save to file
+            output = output.to(torch.float32).div(torch.max(torch.abs(output))).clamp(-1, 1).mul(32767).to(torch.int16).cpu()
+            torchaudio.save(os.path.join(output_folder, "output.wav"), output, sample_rate)
+            
 
         
         print(f"Processed and saved output for example {i} at {output_folder}")

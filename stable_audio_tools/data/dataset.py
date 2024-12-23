@@ -114,7 +114,7 @@ def get_audio_filenames(
         filenames.extend(files)
     return filenames
 
-def get_metadata_info(dataset_id, base_path, metadata_row, codec, midi_len=10, prev_segpoints=None, prev_alignment_path=None):
+def get_metadata_info(dataset_id, base_path, metadata_row, codec, midi_len=10, prev_segpoints=None, prev_alignment_path=None, stage=0):
         
     prompt_dict = {}
         
@@ -127,8 +127,7 @@ def get_metadata_info(dataset_id, base_path, metadata_row, codec, midi_len=10, p
         else:
             alignment_path = audio_path.replace(".wav", "_corresp.txt")
         
-        if not os.path.exists(alignment_path):
-            assert("midi_score" in audio_path) # synthesis
+        if (not os.path.exists(alignment_path)) or (stage == 0):
             
             speed_midi_len = midi_len
             if "speed_ratio" in metadata_row: # alignment for the ones that's speed-augmented
@@ -208,8 +207,8 @@ def get_metadata_info(dataset_id, base_path, metadata_row, codec, midi_len=10, p
             
             try:
                 segpoints = get_musicnet_segpoints(midi_path, alignment_path, midi_len=midi_len)
-            except:
-                print(f"Error in {audio_path}")
+            except Exception as e:
+                print(f"Error in {audio_path}, {e}")
                 return None, None, None, None, None
         else:
             speed_midi_len = midi_len
@@ -269,6 +268,7 @@ def get_metadata_info(dataset_id, base_path, metadata_row, codec, midi_len=10, p
         import warnings
         warnings.filterwarnings("ignore", category=UserWarning)
 
+        audio_path = posixpath.join(base_path, metadata_row['audio_path'])
         midi_path = posixpath.join(base_path, metadata_row['score_midi_path'])
         alignment_path = posixpath.join(base_path, metadata_row['alignment_path'])     
         
@@ -581,7 +581,8 @@ class SampleDatasetChunk(torch.utils.data.Dataset):
             for id, row in tqdm(meta_iter):
                 try:
                     audio_path, midi_tokens, segpoints, num_chunks, prompt_dict = get_metadata_info(config.id, config.path, row, self.codec, midi_len=self.midi_length,
-                                                                                                    prev_segpoints=prev_segpoints, prev_alignment_path=prev_alignment_path)
+                                                                                                    prev_segpoints=prev_segpoints, prev_alignment_path=prev_alignment_path, 
+                                                                                                    stage=self.prompt_stage)
                     prev_segpoints = segpoints
                     prev_alignment_path = row['alignment_path'] if 'alignment_path' in row else None
                 except Exception as e:
@@ -649,16 +650,16 @@ class SampleDatasetChunk(torch.utils.data.Dataset):
             # Randomly choose a case based on probabilities
             case = random.choices(['normal', 'random_duration', 'truncate', 
                                 #    'continuation'
-                                   ], weights=[0.3, 0.4, 0.3])[0]
+                                   ], weights=[0.4, 0.4, 0.2])[0]
 
             original_length = optional_end_seconds - optional_start_seconds
-            if case == 'random_duration':
-                # Case 1: Randomize seconds_total
-                optional_end_seconds = optional_end_seconds
-            elif case == 'truncate':
-                if self.split == 'train': # for testing don't truncate
+            if self.split == 'train': # for testing don't truncate
+                if case == 'random_duration':
+                    # Case 1: Randomize seconds_total
+                    optional_end_seconds = optional_end_seconds
+                elif case == 'truncate':
                     optional_end_seconds = optional_start_seconds + int(max(random.random(), 0.6) * (optional_end_seconds - optional_start_seconds) ) 
-                    
+                        
             # elif case == 'continuation':
             #     # Case 3: Extend for continuation
             #     additional_length = random.uniform(1, 5)  # Adjustable continuation length
@@ -676,18 +677,19 @@ class SampleDatasetChunk(torch.utils.data.Dataset):
                 print(f"Error loading or processing file: {e}")
                 return self[random.randrange(len(self))]
             
-            if case == 'random_duration':
-                seconds_total = random.uniform(optional_end_seconds, 47)
+            if self.split == 'train':
+                if case == 'random_duration':
+                    seconds_total = random.uniform(seconds_total, 47)
 
             info["timestamps"] = (t_start, t_end)
             info["seconds_start"] = seconds_start
             info["seconds_total"] = seconds_total
             info["padding_mask"] = padding_mask
-            
+                        
             prompt_dict['speed'] = tier_speed_description(original_length / self.midi_length)
             info['prompt'] = sample_prompt(prompt_dict, prompt_stage=self.prompt_stage)
 
-            # if random.random() < 0.01:
+            # if random.random() < 0.1:
             #     print(info['prompt'])
             #     if case == 'truncate':
             #         print(f"Truncated to {seconds_total:.2f} seconds")
