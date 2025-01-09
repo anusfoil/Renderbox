@@ -19,7 +19,7 @@ model_config_path = "/home/intern-2024-04/SAO/stable_audio/stable_audio_tools/co
 dataloader_config_path = f"/home/intern-2024-04/SAO/stable_audio/stable_audio_tools/configs/dataset_configs/atepp.json"
 # dataloader_config_path = f"/home/intern-2024-04/SAO/stable_audio/stable_audio_tools/configs/dataset_configs/stage_{stage}_datasets.json"
 model, model_config = load_local_trained_model(model_config_path, 
-                                               "/home/intern-2024-04/SAO/stable_audio/harmonai_train/8vimhbxi/checkpoints/epoch=736-step=57000.ckpt",
+                                               "/home/intern-2024-04/SAO/stable_audio/harmonai_train/xr4laxjt/checkpoints/epoch=786-step=60500.ckpt",
                                                unwarped_path="/home/intern-2024-04/SAO/stable_audio/model_unwrap.ckpt"
                                             #    "/home/intern-2024-04/SAO/stable_audio/harmonai_train/qjafgbey/checkpoints/epoch=735-step=47600.ckpt",
                                             #    "/home/intern-2024-04/SAO/stable_audio/harmonai_train/n9gmvk7i/checkpoints/epoch=347-step=19100.ckpt",
@@ -61,48 +61,45 @@ warnings.filterwarnings("ignore", category=FutureWarning)
 #     audio, info = data  # Unpack data
 # hook()
 
-PERFORMERS = ['Sviatoslav Richter', 'Vladimir Horowitz', 'Vladimir Ashkenazy',
-       'Grigory Sokolov', 'Hélène Grimaud', 'Nikolai Lugansky',
-       'Valentina Lisitsa', 'Yuja Wang', 'Zoltán Kocsis', 'Lazar Berman',
-       'Emil Gilels', 'Evgeny Kissin', 'Leif Ove Andsnes',
-       'Daniel Barenboim', 'Alfred Brendel', 'Mikhail Pletnev',
-       'Claudio Arrau', 'Alfred Cortot', 'András Schiff',
-       'Martha Argerich', 'Dinu Lipatti', 'Alice Sara Ott',
-       'Bertrand Chamayou', 'Anne Queffélec', 'Lang Lang',
-       'Walter Gieseking', 'Murray Perahia', 'Alicia de Larrocha',
-       'Radu Lupu', 'Wilhelm Kempff', 'Mitsuko Uchida',
-       'Maurizio Pollini', 'Glenn Gould', 'Friedrich Gulda',
-       'Edwin Fischer', 'Ivo Pogorelich', 'Arturo Benedetti Michelangeli',
-       'Robert Casadesus', 'Pierre-Laurent Aimard', 'Krystian Zimerman',
-       'Samson François', 'Alexandre Tharaud', 'Artur Schnabel',
-       'Myra Hess', 'Emanuel Ax', 'Van Cliburn']
+DESCRIPTIONS = [
+    ("slow, sad, clear phrasing", "fast, energetic, dynamic"),
+    ("soft, tender, delicate, calm", "hard, loud, aggressive"),
+    ("dreamy, flowing, serene", "mechanical, staccato, rigid"),
+    ("slow, melancholic, with gravity", "brisk, lively, light-hearted"),
+    ("delicate, expressive, subtle", "bold, dramatic, commanding"),
+    ("steady, deliberate, introspective", "hurried, rushed, chaotic"),
+    ("romantic, expressive, lush", "flat, emotionless, robotic"),
+    ("flowing, calm, well-phrased", "jerky, uneven, unpredictable"),
+    ("slow, introspective, thoughtful", "fast, agitated, restless"),
+    ("soft, airy, ethereal", "powerful, dramatic, intense")
+]
 
 for i, data in enumerate(dataloader):
     
-    if i > 20:
-        break
+    if i  > 50:
+        continue
     
     audio, info = data  # Unpack data
     audio = audio[0]
     info = info[0]  # Unpack info
 
-    performers = ["Glenn Gould"] + random.sample(PERFORMERS, 4)
+    # Select a random description pair
+    descriptions = random.choice(DESCRIPTIONS)
 
-    for performer in performers:
+    for description in descriptions:
 
-        output_folder = f"outputs/demo/{str(i)}/{performer.split(' ')[-1]}"
+        output_folder = f"outputs/demo_descriptions/{str(i)}/{description.replace(', ', '_')}"
         os.makedirs(output_folder, exist_ok=True)
         
-        prompt = f"In the style of {performer}, expressive"
+        prompt = f"expressive performance, {description}"
         
         condition = {
-            "prompt": info["prompt"],
+            "prompt": prompt,
             "seconds_start": info["seconds_start"],
             "seconds_total": 30,
             "midi": info["midi"]
         }
 
-        
         # Generate stereo audio
         output = generate_diffusion_cond(
             model,
@@ -129,31 +126,35 @@ for i, data in enumerate(dataloader):
         with open(prompt_file, "w") as f:
             f.write(prompt)
         
-        # save tokens to text file
+        # Save tokens to text file
         tokens_file = os.path.join(output_folder, "tokens.txt")
         with open(tokens_file, "w") as f:
             f.write(str(condition["midi"].tolist()))
-            
+
         # # save times to text file
         # times_file = os.path.join(output_folder, "times.txt")
         # with open(times_file, "w") as f:
         #     f.write(str(condition["seconds_start"]) + " " + str(condition["seconds_total"]))
+     
+
             
-        # save metadata to text file
+        # Save metadata to text file
         metadata_file = os.path.join(output_folder, "meta.txt")
         with open(metadata_file, "w") as f:
             f.write("audio_path: " + str(info['audio_path']) + "\n")
             f.write("file_idx: " + str(info['file_idx'])  + "\n")
             f.write("chunk_idx: " + str(info['chunk_idx']))
             
-        
         # Save MIDI input and ground truth audio
         save_midi_and_wav("", "gt", info["midi"], codec, audio, sample_rate, output_folder=output_folder, synth_midi=True)
 
         
         print(f"Processed and saved output for example {i} at {output_folder}")
 
+
 hook()
+
+
 
 # Generate stereo audio
 output = generate_diffusion_cond(
