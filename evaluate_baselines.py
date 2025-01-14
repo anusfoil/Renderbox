@@ -33,7 +33,8 @@ def import_by_envs(args):
 
 def main(args, modules):
 
-    dataloader_config_path = f"/home/intern-2024-04/SAO/stable_audio/stable_audio_tools/configs/dataset_configs/stage_{args.stage}_datasets.json"
+    dataloader_config_path = f"/home/intern-2024-04/SAO/stable_audio/stable_audio_tools/configs/dataset_configs/stage_2_datasets.json"
+    # dataloader_config_path = f"/home/intern-2024-04/SAO/stable_audio/stable_audio_tools/configs/dataset_configs/stage_{args.stage}_datasets.json"
 
 
     # for batch, get conditions from the dataloader
@@ -84,11 +85,16 @@ def main(args, modules):
         from stable_audio_tools.models.pretrained import load_local_trained_model
         from stable_audio_tools.inference.generation import generate_diffusion_cond
         
+        if args.stage == 0:
+            ckpt_path = "/home/intern-2024-04/SAO/stable_audio/harmonai_train/n9gmvk7i/checkpoints/epoch=347-step=19100.ckpt"
+        elif args.stage == 2:
+            ckpt_path = "/home/intern-2024-04/SAO/stable_audio/harmonai_train/nx26r1rc/checkpoints/epoch=601-step=43700.ckpt"
+        elif args.stage == 4:
+            ckpt_path = "/home/intern-2024-04/SAO/stable_audio/harmonai_train/xr4laxjt/checkpoints/epoch=800-step=61500.ckpt"
+        
         model_config_path = "/home/intern-2024-04/SAO/stable_audio/stable_audio_tools/configs/model_configs/txt2audio/stable_audio_3_0.json"
-        dataloader_config_path = f"/home/intern-2024-04/SAO/stable_audio/stable_audio_tools/configs/dataset_configs/stage_{args.stage}_datasets.json"
         model, model_config = load_local_trained_model(model_config_path, 
-                                                    #    "/home/intern-2024-04/SAO/stable_audio/harmonai_train/u8wthilg/checkpoints/epoch=386-step=28300.ckpt",
-                                                    "/home/intern-2024-04/SAO/stable_audio/harmonai_train/n9gmvk7i/checkpoints/epoch=347-step=19100.ckpt",
+                                                       ckpt_path,
                                                     )
         sample_rate = model_config["sample_rate"]
         sample_size = model_config["sample_size"]
@@ -99,9 +105,8 @@ def main(args, modules):
 
     for i, data in enumerate(dataloader):
         
-        
         if i > 500:
-            continue
+            break
         
         audio, info = data  # Unpack data
         info = info[0]  # Unpack info
@@ -109,8 +114,6 @@ def main(args, modules):
         if info['seconds_total'] == 0:
             continue
         
-        # print(info['audio_path'], info['file_idx'], info['chunk_idx'])
-        # continue
         
         condition = {
             "prompt": info["prompt"],
@@ -119,7 +122,8 @@ def main(args, modules):
             "midi": info["midi"]
         }
         
-        output_folder = os.path.join(f"outputs/stage_{args.stage}_{args.baseline}", str(i))
+        output_folder = os.path.join(f"outputs/stage_2_{args.baseline}_s4", str(i))
+        # output_folder = os.path.join(f"outputs/stage_{args.stage}_{args.baseline}", str(i))
         os.makedirs(output_folder, exist_ok=True)
 
         # Save prompt to text file
@@ -244,7 +248,6 @@ def main(args, modules):
             # Peak normalize, clip, convert to int16, and save to file
             output = output.to(torch.float32).div(torch.max(torch.abs(output))).clamp(-1, 1).mul(32767).to(torch.int16).cpu()
             torchaudio.save(os.path.join(output_folder, "output.wav"), output, sample_rate)
-            
 
         
         print(f"Processed and saved output for example {i} at {output_folder}")

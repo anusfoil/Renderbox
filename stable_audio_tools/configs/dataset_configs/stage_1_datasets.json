@@ -18,7 +18,7 @@
             "path": "/work/musicnet",
             "metadata_path": "/work/musicnet/metadata_augmented.csv",
             "custom_metadata_module": "/home/intern-2024-04/SAO/stable_audio/stable_audio_tools/configs/dataset_configs/custom_metadata/asap_custom_md.py"
-        }       
+        }
     ],
     "random_crop": false,
     "midi_length": 10,

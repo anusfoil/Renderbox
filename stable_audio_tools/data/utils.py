@@ -41,7 +41,7 @@ class PadCrop_Normalized_T(nn.Module):
         if(self.randomize and n_samples > self.n_samples):
             offset = random.randint(0, upper_bound)        
         
-        dur_samples = self.n_samples
+        dur_samples = self.n_samples # 2097152
         
         # obtain the start and end seconds from the optional arguments
         if optional_start_seconds is not None and optional_end_seconds is not None:
@@ -50,7 +50,7 @@ class PadCrop_Normalized_T(nn.Module):
             seconds_total = seconds_end - seconds_start
             
             offset = int(seconds_start * self.sample_rate)
-            dur_samples = int((seconds_end - seconds_start) * self.sample_rate)
+            dur_samples = min(int((seconds_end - seconds_start) * self.sample_rate), self.n_samples) # duration should be less than n_samples
         
 
         # Calculate the start and end times of the chunk ( this is a ratio)
@@ -64,6 +64,7 @@ class PadCrop_Normalized_T(nn.Module):
         try:
             chunk[:, :min(dur_samples, n_samples - offset)] = source[:, offset:offset + dur_samples]
         except Exception as e:
+            print(f"seconds_start: {seconds_start}, seconds_end: {seconds_end}, offset: {offset}, dur_samples: {dur_samples}, n_samples: {n_samples}")
             raise e
         
         # Calculate the start and end times of the chunk in seconds

@@ -344,7 +344,10 @@ def gaps_alignment_segpoint(alignment_dir, midi_len=5.12):
     alignment_df = alignment_df[alignment_df["label"] == "match"]
 
     merged_df = pd.merge(alignment_df, score_df, left_on="score_id", right_on="id", suffixes=("_score", "_perf"))
-    merged_df = pd.merge(merged_df, performance_df, left_on="performance_id", right_on="id", suffixes=("_score", "_perf"))
+    # merged_df = pd.merge(merged_df, performance_df, left_on="performance_id", right_on="id", suffixes=("_score", "_perf"))
+    performance_df = performance_df.rename(columns={"pitch": "pitch_perf", "id": "id_perf"})
+    merged_df = pd.merge(merged_df, performance_df, left_on="performance_id", right_on="id_perf", suffixes=("_score", "_perf"))
+
 
     columns_to_keep = [col for col in merged_df.columns if (not col.startswith("id_") and not col.endswith("_div") and not col.endswith("_quarter"))]
     merged_df = merged_df[columns_to_keep]
@@ -597,7 +600,7 @@ def get_conespresione_segpoints(match_file, score_midi_path=None, midi_len=10):
         score_times = score_times * beat_to_sec + onset_offset
         
         if not np.isclose(score_times[-1], score_note_array[-1]['onset_sec'], rtol=0.1):
-            print(f"Warning: Score times do not match the last note onset time: {score_times[-1]} vs {score_note_array[-1]['onset_sec']}")
+            # print(f"Warning: Score times do not match the last note onset time: {score_times[-1]} vs {score_note_array[-1]['onset_sec']}")
             # use the last score onset to compute the ratio
             beat_to_sec =  score_note_array[-1]['onset_sec'] / score_times[-1]
             onset_offset = score_note_array[0]['onset_sec'] - score_note_array_[0]['onset_beat'] * beat_to_sec

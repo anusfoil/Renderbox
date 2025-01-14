@@ -167,3 +167,5 @@ harmonai_train
 outputs/
 outputs_musicnet/
 eval/
+test_result/
+run_separate.py

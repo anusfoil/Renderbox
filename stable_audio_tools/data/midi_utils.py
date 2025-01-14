@@ -396,3 +396,4 @@ def save_midi_and_wav(file_idx, chunk_idx, tokens, codec, data, sr, output_folde
         data = rearrange(data, "d n -> n d")
         sf.write(wav_path, data, sr)
         # print(f"Saved WAV: {wav_path}")
+    

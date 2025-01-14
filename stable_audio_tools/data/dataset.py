@@ -4,7 +4,7 @@ import io
 import os
 import posixpath
 import random
-import re
+import re, math
 from tqdm import tqdm
 from itertools import chain
 import time
@@ -118,7 +118,7 @@ def get_metadata_info(dataset_id, base_path, metadata_row, codec, midi_len=10, p
         
     prompt_dict = {}
         
-    if dataset_id == "asap":
+    if "asap" in dataset_id:
         audio_path = posixpath.join(base_path, metadata_row['audio_performance'])
         midi_path = posixpath.join(base_path, metadata_row['midi_score'])
         
@@ -170,7 +170,7 @@ def get_metadata_info(dataset_id, base_path, metadata_row, codec, midi_len=10, p
         prompt_dict['instrument'] = "Saxophone"
         prompt_dict['title'] = f"{form}, {title}"
     
-    if dataset_id == "gaps":
+    if "gaps" in dataset_id:
         if "good_alignment" in metadata_row and (not metadata_row['good_alignment']):
             return None, None, None, None, None
         
@@ -198,7 +198,7 @@ def get_metadata_info(dataset_id, base_path, metadata_row, codec, midi_len=10, p
     if dataset_id == "urmp":
         pass
         
-    if dataset_id == "musicnet":
+    if "musicnet" in dataset_id:
         audio_path = posixpath.join(base_path, metadata_row['audio_path'])
         midi_path = posixpath.join(base_path, metadata_row['score_midi_path'])
         
@@ -272,7 +272,7 @@ def get_metadata_info(dataset_id, base_path, metadata_row, codec, midi_len=10, p
         midi_path = posixpath.join(base_path, metadata_row['score_midi_path'])
         alignment_path = posixpath.join(base_path, metadata_row['alignment_path'])     
         
-        if prev_alignment_path is not None and prev_alignment_path == alignment_path:
+        if prev_alignment_path is not None and prev_alignment_path == metadata_row['alignment_path']:
             segpoints = prev_segpoints
         else:
             try:
@@ -282,6 +282,9 @@ def get_metadata_info(dataset_id, base_path, metadata_row, codec, midi_len=10, p
         
         prompt_dict['instrument'] = "Piano"
         prompt_dict['perf'] = f"Expressive performance, style of {metadata_row['performer']}"
+        if "MIDI" in metadata_row['performer']:
+            prompt_dict['perf'] = "synthesis"
+        
         prompt_dict['title'] = metadata_row['piece_name']
         prompt_dict['description'] = metadata_row['answer']
     
@@ -364,7 +367,7 @@ def sample_prompt(prompt_dict, prompt_stage=0):
         } # instrumentation, title, composer, ...
 
         combined_fields = list(sampled_fields.values()) + list(optional_fields.values())
-
+        
         random.shuffle(combined_fields)
 
         prompt = ", ".join(combined_fields)
@@ -506,6 +509,9 @@ class SampleDataset(torch.utils.data.Dataset):
         #     return self[random.randrange(len(self))]
 
 
+def is_file_size_within_limit(file_path, max_size_mb=300):
+    file_size_mb = os.path.getsize(file_path) / (1024 * 1024)  # Convert bytes to MB
+    return file_size_mb <= max_size_mb
 
 
 class SampleDatasetChunk(torch.utils.data.Dataset):
@@ -605,6 +611,7 @@ class SampleDatasetChunk(torch.utils.data.Dataset):
 
         # for i in tqdm(range(len(self))):
         #     self[i]
+        # hook()
 
     def load_file(self, filename):
         ext = filename.split(".")[-1]
@@ -643,6 +650,9 @@ class SampleDatasetChunk(torch.utils.data.Dataset):
             info["path"] = audio_path
             info['midi'] = midi_tokens[chunk_idx]
             optional_start_seconds, optional_end_seconds = segpoints[chunk_idx], segpoints[chunk_idx + 1]
+            if optional_end_seconds <= optional_start_seconds:
+                return self[random.randrange(len(self))]
+            
 
             if "__reject__" in info and info["__reject__"]:
                 return self[random.randrange(len(self))]
@@ -658,8 +668,10 @@ class SampleDatasetChunk(torch.utils.data.Dataset):
                     # Case 1: Randomize seconds_total
                     optional_end_seconds = optional_end_seconds
                 elif case == 'truncate':
-                    optional_end_seconds = optional_start_seconds + int(max(random.random(), 0.6) * (optional_end_seconds - optional_start_seconds) ) 
-                        
+                    optional_end_seconds = optional_start_seconds + math.ceil(max(random.random(), 0.6) * original_length )
+                    if optional_end_seconds <= optional_start_seconds:
+                        optional_end_seconds = optional_start_seconds + 1
+                    
             # elif case == 'continuation':
             #     # Case 3: Extend for continuation
             #     additional_length = random.uniform(1, 5)  # Adjustable continuation length
@@ -667,20 +679,27 @@ class SampleDatasetChunk(torch.utils.data.Dataset):
             #     info['prompt_continuation'] = True
 
             start_time = time.time()
+            
+            if audio_path == '/work/ATEPP/../ATEPP-audio/Ludwig_van_Beethoven/Piano_Sonata_No._3_in_C_Major,_Op._2_No._3/II._Adagio/11.mp3':
+                return self[random.randrange(len(self))]
 
             try:
+                if not is_file_size_within_limit(audio_path):
+                    print(f"File {audio_path} is too large to process.")
+                    return self[random.randrange(len(self))]
                 audio = self.load_file(audio_path)
                 audio, t_start, t_end, seconds_start, seconds_total, padding_mask = self.pad_crop(
                     audio, optional_start_seconds, optional_end_seconds
                 )
             except Exception as e:
-                print(f"Error loading or processing file: {e}")
+                print(f"Error loading or processing file {audio_path}: {e}")
                 return self[random.randrange(len(self))]
             
             if self.split == 'train':
                 if case == 'random_duration':
                     seconds_total = random.uniform(seconds_total, 47)
 
+            info['instrument'] = prompt_dict['instrument']
             info["timestamps"] = (t_start, t_end)
             info["seconds_start"] = seconds_start
             info["seconds_total"] = seconds_total
@@ -828,7 +847,7 @@ def create_dataloader_from_config(dataset_config, batch_size, sample_size, sampl
             )
 
         return torch.utils.data.DataLoader(train_set, batch_size, shuffle=True,
-                                num_workers=num_workers, persistent_workers=True, pin_memory=True, drop_last=True, collate_fn=collation_fn)
+                                num_workers=num_workers, persistent_workers=False, pin_memory=True, drop_last=True, collate_fn=collation_fn)
 
     elif dataset_type in ["s3", "wds"]: # Support "s3" type for backwards compatibility
         wds_configs = []

@@ -27,6 +27,8 @@ class ModelConfigEmbedderCallback(pl.Callback):
 
 def main():
 
+    os.environ["TORCH_AUDIO_FFMPEG_LOG_LEVEL"] = "quiet"
+
     args = get_all_args()
 
     seed = args.seed
