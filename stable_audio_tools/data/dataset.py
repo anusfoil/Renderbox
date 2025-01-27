@@ -603,6 +603,7 @@ class SampleDatasetChunk(torch.utils.data.Dataset):
                     (audio_path, midi_tokens, segpoints, prompt_dict)
                 ) 
                 # print(len(self.data_list)-1, audio_path)
+                
             
             print(f"Loaded {config.id} with {len(self.data_list)} files, boundaries: {self.boundaries[-1]}")
                 
@@ -611,7 +612,6 @@ class SampleDatasetChunk(torch.utils.data.Dataset):
 
         # for i in tqdm(range(len(self))):
         #     self[i]
-        # hook()
 
     def load_file(self, filename):
         ext = filename.split(".")[-1]
@@ -684,9 +684,9 @@ class SampleDatasetChunk(torch.utils.data.Dataset):
                 return self[random.randrange(len(self))]
 
             try:
-                if not is_file_size_within_limit(audio_path):
-                    print(f"File {audio_path} is too large to process.")
-                    return self[random.randrange(len(self))]
+                # if not is_file_size_within_limit(audio_path):
+                #     print(f"File {audio_path} is too large to process.")
+                #     return self[random.randrange(len(self))]
                 audio = self.load_file(audio_path)
                 audio, t_start, t_end, seconds_start, seconds_total, padding_mask = self.pad_crop(
                     audio, optional_start_seconds, optional_end_seconds

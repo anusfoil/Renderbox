@@ -42,7 +42,7 @@
                     "config": {
                         "audio_model_type": "HTSAT-base",
                         "enable_fusion": true,
-                        "clap_ckpt_path": "/home/intern-2024-04/.cache/laion_clap/music_speech_audioset_epoch_15_esc_89.98.pt",
+                        "clap_ckpt_path": ".cache/laion_clap/music_speech_audioset_epoch_15_esc_89.98.pt",
                         "use_text_features": true,
                         "feature_layer_ix": -2
                     }

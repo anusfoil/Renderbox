@@ -173,8 +173,6 @@ def align_notes(txt_file, midi_file, frame_to_samples=1200, sample_rate=96000, v
 
     alignment_func = interp1d(aligned_midi_times, aligned_audio_times, fill_value='extrapolate', kind='nearest')
     
-    # if str(midi_file) == '/mnt/data1/intern-2024-04/yamahasax/20200724_AltoSax_Suzuki-Kei-san_BossaNova/midi/Expressive_Theme1/C-dur_in_Bossa.mid':
-    #     hook()
     
     return alignment_func
 

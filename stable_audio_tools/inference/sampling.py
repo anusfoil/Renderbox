@@ -173,7 +173,6 @@ def sample_k(
         # set the initial latent to noise
         x = noise
 
-
     with torch.cuda.amp.autocast():
         if sampler_type == "k-heun":
             return K.sampling.sample_heun(denoiser, x, sigmas, disable=False, callback=wrapped_callback, extra_args=extra_args)

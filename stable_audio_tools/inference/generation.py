@@ -1,12 +1,64 @@
+import os, json
 import numpy as np
 import torch 
 import typing as tp
 import math 
 from torchaudio import transforms as T
+from functools import partial
 
 from .utils import prepare_audio
 from .sampling import sample, sample_k, sample_rf
 from ..data.utils import PadCrop
+
+def save_latent_callback(sampled_dict, save_path):
+    """
+    Callback function to save latent embeddings during sampling.
+
+    Parameters:
+    sampled_dict (dict): Dictionary containing sampled information (x, i, sigma, sigma_hat, denoised).
+    save_path (str): Path to save the latent embeddings for the specific run.
+
+    """
+
+
+    # Extract relevant information from the sampled_dict
+    x = sampled_dict['x']  # Latent representation (numpy array)
+    i = sampled_dict['i']  # Iteration index
+    sigma = sampled_dict['sigma']  # Current noise level
+    sigma_hat = sampled_dict['sigma_hat']  # Predicted noise level
+    denoised = sampled_dict['denoised']  # Denoised representation
+
+    if i < 99: # only save every 100th iteration
+        return
+
+    save_path = save_path.replace(".json", f"_{i}.json")
+    os.makedirs(os.path.dirname(save_path), exist_ok=True)
+
+    # Create a structured entry
+    entry = {
+        "iteration": i,
+        "sigma": float(sigma),
+        "sigma_hat": float(sigma_hat),
+        "x": x.tolist(),  # Save latent representation as a list for JSON compatibility
+        "denoised": denoised.tolist()
+    }
+
+    # Load existing data if the file exists
+    if os.path.exists(save_path):
+        with open(save_path, "r") as f:
+            existing_data = json.load(f)
+    else:
+        existing_data = []
+
+    # Append the new entry to the existing data
+    existing_data.append(entry)
+
+    # Save the updated data back to the file
+    with open(save_path, "w") as f:
+        json.dump(existing_data, f, indent=4)
+
+    return
+
 
 def generate_diffusion_uncond(
         model,
@@ -104,6 +156,7 @@ def generate_diffusion_cond(
         init_noise_level: float = 1.0,
         mask_args: dict = None,
         return_latents = False,
+        save_path = None,
         **sampler_kwargs
         ) -> torch.Tensor: 
     """
@@ -138,6 +191,8 @@ def generate_diffusion_cond(
     seed = seed if seed != -1 else np.random.randint(0, 2**32 - 1, dtype=np.uint32)
     print(seed)
     torch.manual_seed(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
     # Define the initial noise immediately after setting the seed
     noise = torch.randn([batch_size, model.io_channels, sample_size], device=device)
 
@@ -222,7 +277,17 @@ def generate_diffusion_cond(
 
     if diff_objective == "v":    
         # k-diffusion denoising process go!
-        sampled = sample_k(model.model, noise, init_audio, mask, steps, **sampler_kwargs, **conditioning_inputs, **negative_conditioning_tensors, cfg_scale=cfg_scale, batch_cfg=True, rescale_cfg=True, device=device)
+
+        if save_path:
+            run_id = conditioning[0]['prompt'].split(",")[0].split("of ")[-1].replace(" ", "_")
+            save_path = os.path.join(save_path, f"latent_embeddings_{run_id}.json")
+
+            # Create a partial function for the callback
+            callback_func = partial(save_latent_callback, save_path=save_path)
+        else:
+            callback_func = None
+        
+        sampled = sample_k(model.model, noise, init_audio, mask, steps, **sampler_kwargs, **conditioning_inputs, **negative_conditioning_tensors, cfg_scale=cfg_scale, batch_cfg=True, rescale_cfg=True, device=device, callback=callback_func)
     elif diff_objective == "rectified_flow":
 
         if "sigma_min" in sampler_kwargs:
