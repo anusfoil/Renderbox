@@ -6,7 +6,7 @@
             "id": "atepp",
             "path": "/work/ATEPP",
             "metadata_path": "/work/ATEPP/metadata_alignment.csv",
-            "custom_metadata_module": "/home/intern-2024-04/SAO/stable_audio/stable_audio_tools/configs/dataset_configs/custom_metadata/asap_custom_md.py"
+            "custom_metadata_module": "stable_audio_tools/configs/dataset_configs/custom_metadata/asap_custom_md.py"
         }
     ],
     "random_crop": false,

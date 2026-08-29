@@ -5,92 +5,92 @@
             "id": "asap-synth",
             "path": "/work/asap-dataset",
             "metadata_path": "/work/asap-dataset/metadata_synth.csv",
-            "custom_metadata_module": "/home/intern-2024-04/SAO/stable_audio/stable_audio_tools/configs/dataset_configs/custom_metadata/asap_custom_md.py"
+            "custom_metadata_module": "stable_audio_tools/configs/dataset_configs/custom_metadata/asap_custom_md.py"
         },
         {
             "id": "gaps-synth",
             "path": "/work/gaps_v1",
             "metadata_path": "/work/gaps_v1/metadata_synth.csv",
-            "custom_metadata_module": "/home/intern-2024-04/SAO/stable_audio/stable_audio_tools/configs/dataset_configs/custom_metadata/asap_custom_md.py"
+            "custom_metadata_module": "stable_audio_tools/configs/dataset_configs/custom_metadata/asap_custom_md.py"
         },
 
         {
             "id": "musicnet-synth",
             "path": "/work/musicnet",
             "metadata_path": "/work/musicnet/metadata_synth.csv",
-            "custom_metadata_module": "/home/intern-2024-04/SAO/stable_audio/stable_audio_tools/configs/dataset_configs/custom_metadata/asap_custom_md.py"
+            "custom_metadata_module": "stable_audio_tools/configs/dataset_configs/custom_metadata/asap_custom_md.py"
         },
         {
             "id": "gaps-speed",
             "path": "/work/gaps_v1",
             "metadata_path": "/work/gaps_v1/metadata_augmented.csv",
-            "custom_metadata_module": "/home/intern-2024-04/SAO/stable_audio/stable_audio_tools/configs/dataset_configs/custom_metadata/asap_custom_md.py"
+            "custom_metadata_module": "stable_audio_tools/configs/dataset_configs/custom_metadata/asap_custom_md.py"
         },
         {
             "id": "asap-speed",
             "path": "/work/asap-dataset",
             "metadata_path": "/work/asap-dataset/metadata_augmented.csv",
-            "custom_metadata_module": "/home/intern-2024-04/SAO/stable_audio/stable_audio_tools/configs/dataset_configs/custom_metadata/asap_custom_md.py"
+            "custom_metadata_module": "stable_audio_tools/configs/dataset_configs/custom_metadata/asap_custom_md.py"
         },
         {
             "id": "musicnet-speed",
             "path": "/work/musicnet",
             "metadata_path": "/work/musicnet/metadata_augmented.csv",
-            "custom_metadata_module": "/home/intern-2024-04/SAO/stable_audio/stable_audio_tools/configs/dataset_configs/custom_metadata/asap_custom_md.py"
+            "custom_metadata_module": "stable_audio_tools/configs/dataset_configs/custom_metadata/asap_custom_md.py"
         },
         {
             "id": "bachviolin",
             "path": "/work/bach-violin-dataset/bach-violin",
             "metadata_path": "/work/bach-violin-dataset/bach-violin/metadata.csv",
-            "custom_metadata_module": "/home/intern-2024-04/SAO/stable_audio/stable_audio_tools/configs/dataset_configs/custom_metadata/asap_custom_md.py"
+            "custom_metadata_module": "stable_audio_tools/configs/dataset_configs/custom_metadata/asap_custom_md.py"
         },
         {
             "id": "gaps",
             "path": "/work/gaps_v1",
             "metadata_path": "/work/gaps_v1/metadata_new.csv",
-            "custom_metadata_module": "/home/intern-2024-04/SAO/stable_audio/stable_audio_tools/configs/dataset_configs/custom_metadata/asap_custom_md.py"
+            "custom_metadata_module": "stable_audio_tools/configs/dataset_configs/custom_metadata/asap_custom_md.py"
         },
         {
             "id": "yamahasax",
             "path": "/work/yamahasax",
             "metadata_path": "/work/yamahasax/metadata.csv",
-            "custom_metadata_module": "/home/intern-2024-04/SAO/stable_audio/stable_audio_tools/configs/dataset_configs/custom_metadata/asap_custom_md.py"
+            "custom_metadata_module": "stable_audio_tools/configs/dataset_configs/custom_metadata/asap_custom_md.py"
         },
         {
             "id": "asap",
             "path": "/work/asap-dataset",
             "metadata_path": "/work/asap-dataset/merged_metadata.csv",
-            "custom_metadata_module": "/home/intern-2024-04/SAO/stable_audio/stable_audio_tools/configs/dataset_configs/custom_metadata/asap_custom_md.py"
+            "custom_metadata_module": "stable_audio_tools/configs/dataset_configs/custom_metadata/asap_custom_md.py"
         },
         {
             "id": "conespressione",
             "path": "/work/con_espressione_game_dataset",
             "metadata_path": "/work/con_espressione_game_dataset/metadata.csv",
-            "custom_metadata_module": "/home/intern-2024-04/SAO/stable_audio/stable_audio_tools/configs/dataset_configs/custom_metadata/asap_custom_md.py"
+            "custom_metadata_module": "stable_audio_tools/configs/dataset_configs/custom_metadata/asap_custom_md.py"
         },
         {
             "id": "vienna422",
             "path": "/work/vienna4x22",
             "metadata_path": "/work/vienna4x22/metadata.csv",
-            "custom_metadata_module": "/home/intern-2024-04/SAO/stable_audio/stable_audio_tools/configs/dataset_configs/custom_metadata/asap_custom_md.py"
+            "custom_metadata_module": "stable_audio_tools/configs/dataset_configs/custom_metadata/asap_custom_md.py"
         },
         {
             "id": "atepp",
             "path": "/work/ATEPP",
             "metadata_path": "/work/ATEPP/metadata_alignment.csv",
-            "custom_metadata_module": "/home/intern-2024-04/SAO/stable_audio/stable_audio_tools/configs/dataset_configs/custom_metadata/asap_custom_md.py"
+            "custom_metadata_module": "stable_audio_tools/configs/dataset_configs/custom_metadata/asap_custom_md.py"
         },
         {
             "id": "asap",
             "path": "/work/asap-dataset",
             "metadata_path": "/work/asap-dataset/metadata_mistakes.csv",
-            "custom_metadata_module": "/home/intern-2024-04/SAO/stable_audio/stable_audio_tools/configs/dataset_configs/custom_metadata/asap_custom_md.py"
+            "custom_metadata_module": "stable_audio_tools/configs/dataset_configs/custom_metadata/asap_custom_md.py"
         },
         {
             "id": "musicnet",
             "path": "/work/musicnet",
             "metadata_path": "/work/musicnet/metadata.csv",
-            "custom_metadata_module": "/home/intern-2024-04/SAO/stable_audio/stable_audio_tools/configs/dataset_configs/custom_metadata/asap_custom_md.py"
+            "custom_metadata_module": "stable_audio_tools/configs/dataset_configs/custom_metadata/asap_custom_md.py"
         }
     ],
     "random_crop": false,

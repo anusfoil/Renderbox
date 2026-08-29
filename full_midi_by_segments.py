@@ -16,12 +16,6 @@ from stable_audio_tools.data.event_codec import Codec
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
 model_config_path = "stable_audio_tools/configs/model_configs/txt2audio/stable_audio_3_0.json"
-model, model_config = load_local_trained_model(model_config_path, 
-                                               "",
-                                               unwarped_path="model_unwrap.ckpt"
-                                               )
-
-model = model.to(device)
 
 with open(model_config_path) as f:
     model_config = json.load(f)
@@ -111,8 +105,11 @@ if __name__ == "__main__":
     parser.add_argument("--output", type=str, required=True)
     parser.add_argument("--prompt_file", type=str, required=True)
     args = parser.parse_args()
-    
+
     prompt = open(args.prompt_file, "r").read()
+
+    model, _ = load_local_trained_model(model_config_path, "", unwarped_path=args.unwarped_path)
+    model = model.to(device)
 
     process_midi(args.midi, model, codec, sample_rate, args.output, midi_length, prompt)
 

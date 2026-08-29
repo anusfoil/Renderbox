@@ -17,9 +17,9 @@ device = "cuda" if torch.cuda.is_available() else "cpu"
 stage = "0"
 
 
-model_config_path = "/home/intern-2024-04/SAO/stable_audio/stable_audio_tools/configs/model_configs/txt2audio/stable_audio_3_0.json"
-dataloader_config_path = f"/home/intern-2024-04/SAO/stable_audio/stable_audio_tools/configs/dataset_configs/atepp.json"
-# dataloader_config_path = f"/home/intern-2024-04/SAO/stable_audio/stable_audio_tools/configs/dataset_configs/stage_{stage}_datasets.json"
+model_config_path = "stable_audio_tools/configs/model_configs/txt2audio/stable_audio_3_0.json"
+dataloader_config_path = f"stable_audio_tools/configs/dataset_configs/atepp.json"
+# dataloader_config_path = f"stable_audio_tools/configs/dataset_configs/stage_{stage}_datasets.json"
 model, model_config = load_local_trained_model(model_config_path, 
                                             #    "harmonai_train/xr4laxjt/checkpoints/epoch=800-step=61500.ckpt",
                                                "harmonai_train/lpt77c2n/checkpoints/epoch=620-step=43200.ckpt",
