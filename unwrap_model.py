@@ -10,6 +10,10 @@ if __name__ == '__main__':
     args.add_argument('--ckpt-path', type=str, default=None)
     args.add_argument('--name', type=str, default='exported_model')
     args.add_argument('--use-safetensors', action='store_true')
+    # Training checkpoints restore tensors to their original cuda:N locations, which needs
+    # a GPU large enough to hold the optimizer state too. Pass --map-location cpu on a
+    # smaller card.
+    args.add_argument('--map-location', type=str, default=None)
 
     args = args.parse_args()
 
@@ -73,9 +77,10 @@ if __name__ == '__main__':
         use_ema = training_config.get("use_ema", True)
         
         training_wrapper = DiffusionCondTrainingWrapper.load_from_checkpoint(
-            args.ckpt_path, 
-            model=model, 
-            use_ema=use_ema, 
+            args.ckpt_path,
+            map_location=args.map_location,
+            model=model,
+            use_ema=use_ema,
             lr=training_config.get("learning_rate", None),
             optimizer_configs=training_config.get("optimizer_configs", None),
             strict=False

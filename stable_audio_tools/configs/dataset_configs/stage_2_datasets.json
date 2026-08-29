@@ -5,32 +5,32 @@
             "id": "musicnet",
             "path": "/work/musicnet",
             "metadata_path": "/work/musicnet/metadata.csv",
-            "custom_metadata_module": "/home/intern-2024-04/SAO/stable_audio/stable_audio_tools/configs/dataset_configs/custom_metadata/asap_custom_md.py"
+            "custom_metadata_module": "stable_audio_tools/configs/dataset_configs/custom_metadata/asap_custom_md.py"
         }, 
         {
             "id": "bachviolin",
             "path": "/work/bach-violin-dataset/bach-violin",
             "metadata_path": "/work/bach-violin-dataset/bach-violin/metadata.csv",
-            "custom_metadata_module": "/home/intern-2024-04/SAO/stable_audio/stable_audio_tools/configs/dataset_configs/custom_metadata/asap_custom_md.py"
+            "custom_metadata_module": "stable_audio_tools/configs/dataset_configs/custom_metadata/asap_custom_md.py"
         },
         {
             "id": "gaps",
             "path": "/work/gaps_v1",
             "metadata_path": "/work/gaps_v1/metadata_new.csv",
-            "custom_metadata_module": "/home/intern-2024-04/SAO/stable_audio/stable_audio_tools/configs/dataset_configs/custom_metadata/asap_custom_md.py"
+            "custom_metadata_module": "stable_audio_tools/configs/dataset_configs/custom_metadata/asap_custom_md.py"
         },
         {
             "id": "yamahasax",
             "path": "/work/yamahasax",
             "metadata_path": "/work/yamahasax/metadata.csv",
-            "custom_metadata_module": "/home/intern-2024-04/SAO/stable_audio/stable_audio_tools/configs/dataset_configs/custom_metadata/asap_custom_md.py"
+            "custom_metadata_module": "stable_audio_tools/configs/dataset_configs/custom_metadata/asap_custom_md.py"
         },
 
         {
             "id": "asap",
             "path": "/work/asap-dataset",
             "metadata_path": "/work/asap-dataset/merged_metadata.csv",
-            "custom_metadata_module": "/home/intern-2024-04/SAO/stable_audio/stable_audio_tools/configs/dataset_configs/custom_metadata/asap_custom_md.py"
+            "custom_metadata_module": "stable_audio_tools/configs/dataset_configs/custom_metadata/asap_custom_md.py"
         }
     ],
     "random_crop": false,
