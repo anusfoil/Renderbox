@@ -51,6 +51,11 @@ def main():
     p.add_argument("--wav", required=True)
     p.add_argument("--outdir", required=True)
     p.add_argument("--midi_length", type=int, default=10)
+    p.add_argument("--midi_velocity", type=int, default=64,
+                   help="velocity to write into the exported MIDI. The codec quantises "
+                        "velocity to a single on/off bit, so the tokens carry no dynamics "
+                        "and tokens_to_notes reconstructs every note at velocity 1, which "
+                        "is inaudible in most synths.")
     args = p.parse_args()
 
     os.makedirs(args.outdir, exist_ok=True)
@@ -82,6 +87,8 @@ def main():
         sf.write(os.path.join(args.outdir, f"seg{i:03d}.wav"), clip, sr)
         if i < len(tokens):
             ns = tokens_to_notes(tokens[i], codec)
+            for note in ns.notes:
+                note.velocity = args.midi_velocity
             note_sequence_to_midi_file(ns, os.path.join(args.outdir, f"seg{i:03d}.mid"))
 
         mono = clip.mean(axis=1)
