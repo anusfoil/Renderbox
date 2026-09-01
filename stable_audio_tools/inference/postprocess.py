@@ -136,8 +136,9 @@ def trim_to_music(
     audio: torch.Tensor,
     sample_rate: int,
     seconds_total: float,
-    fade_ms: float = 30.0,
+    fade_ms: float = 0.0,
     hard_cut: bool = False,
+    tail_margin_ms: float = 0.0,
     **kwargs,
 ) -> tp.Tuple[tp.Optional[torch.Tensor], dict]:
     """Trim a generated canvas down to its music.
@@ -146,32 +147,108 @@ def trim_to_music(
     it for segments whose MIDI holds no note onsets (a rest or a held sustain),
     where there is no onset energy to detect and retrying would be pointless.
 
+    ``fade_ms`` defaults to 0 because segments are joined with ``crossfade_audio``,
+    which already fades the tail. Fading here as well drives the junction to
+    silence for the length of the fade, which shows up as a hole in the envelope
+    at every segment boundary. Only the very end of the finished track needs an
+    explicit fade.
+
+    ``tail_margin_ms`` keeps that much of the canvas past the detected boundary.
+    It defaults to 0 and is rarely useful: everything past the boundary is by
+    definition below the detection threshold, so crossfading over a margin only
+    guarantees a quiet join. Use ``join_segments`` instead, which overlaps the
+    next segment onto this one's real decay.
+
     Returns ``(audio, diag)`` with ``audio=None`` when the segment is degenerate.
     """
+    margin = int(tail_margin_ms * 1e-3 * sample_rate)
+
     if hard_cut:
         end = min(int(seconds_total * sample_rate), audio.size(1))
         diag = {"ok": True, "reason": "hard cut (no note onsets)",
                 "end_sample": end, "end_time": end / sample_rate,
                 "floor_db": None, "music_db": None, "snr_db": None,
                 "thresh_db": None}
-        return apply_fade_out(audio[:, :end], sample_rate, fade_ms), diag
+    else:
+        diag = find_music_end(audio, sample_rate, seconds_total, **kwargs)
+        if not diag["ok"]:
+            return None, diag
+        end = diag["end_sample"]
 
-    diag = find_music_end(audio, sample_rate, seconds_total, **kwargs)
-    if not diag["ok"]:
-        return None, diag
-    return apply_fade_out(audio[:, : diag["end_sample"]], sample_rate, fade_ms), diag
+    kept = min(end + margin, audio.size(1))
+    diag["kept_sample"] = kept
+    diag["kept_time"] = kept / sample_rate
+    return apply_fade_out(audio[:, :kept], sample_rate, fade_ms), diag
 
 
 def crossfade_audio(audio1: torch.Tensor, audio2: torch.Tensor,
-                    fade_duration: float, sample_rate: int) -> torch.Tensor:
-    """Equal-gain crossfade. All three slices use the same clamped length."""
+                    fade_duration: float, sample_rate: int,
+                    equal_power: bool = True) -> torch.Tensor:
+    """Crossfade two segments. All three slices use the same clamped length.
+
+    Consecutive segments are independent draws, so their overlap is
+    uncorrelated and an equal-power (sqrt) fade holds the level constant
+    through the junction; a linear fade would dip by 3 dB.
+    """
     n = min(int(fade_duration * sample_rate), audio1.size(1), audio2.size(1))
     if n <= 0:
         return torch.cat([audio1, audio2], dim=1)
-    fade_out = torch.linspace(1, 0, n, device=audio1.device)
-    fade_in = torch.linspace(0, 1, n, device=audio1.device)
+    ramp = torch.linspace(1, 0, n, device=audio1.device)
+    fade_out, fade_in = (ramp.sqrt(), (1 - ramp).sqrt()) if equal_power else (ramp, 1 - ramp)
     crossfaded = audio1[:, -n:] * fade_out + audio2[:, :n] * fade_in
     return torch.cat([audio1[:, :-n], crossfaded, audio2[:, n:]], dim=1)
+
+
+def leading_silence(audio: torch.Tensor, sample_rate: int,
+                    thresh_db: tp.Optional[float] = None,
+                    below_music_db: float = 30.0,
+                    hop_ms: float = 5.0, max_seconds: float = 0.5) -> float:
+    """Length in seconds of the run of silence at the head of a segment.
+
+    The model has no acoustic context, so it renders every segment from digital
+    silence. When a segment's MIDI opens on a short rest, its head is silent,
+    and butting it against the previous segment leaves an audible hole where a
+    real performance would have carried the previous notes' decay across.
+
+    The threshold is relative to the segment's own music level, not to the noise
+    floor: a head sitting 40 dB under the music is a hole to the ear even though
+    it is well above the floor.
+    """
+    db, hop = frame_rms_db(audio, sample_rate, hop_ms)
+    if db.numel() < 2:
+        return 0.0
+    if thresh_db is None:
+        thresh_db = db.median().item() - below_music_db
+    above = (db > thresh_db).nonzero(as_tuple=True)[0]
+    if not len(above):
+        return 0.0
+    return min(above[0].item() * hop / sample_rate, max_seconds)
+
+
+def join_segments(a: torch.Tensor, b: torch.Tensor, sample_rate: int,
+                  overlap_seconds: float, tail_fade_ms: float = 0.0) -> torch.Tensor:
+    """Append `b` to `a`, sliding it back over `a`'s decay by `overlap_seconds`.
+
+    Unlike a crossfade this does not fade `a` out: `b`'s head is silent over the
+    overlap by construction, so `a`'s decay simply continues underneath until
+    `b` enters. Nothing is removed from either segment, and two different
+    passages are never heard on top of each other.
+
+    `tail_fade_ms` defaults to 0: the previous segment is cut at a point that is
+    already ~45 dB below its own music, so the discontinuity is inaudible, while
+    a fade would drive the join to digital silence and create the very hole this
+    is meant to avoid.
+    """
+    a = apply_fade_out(a, sample_rate, tail_fade_ms)
+    n = min(int(overlap_seconds * sample_rate), a.size(1), b.size(1))
+    if n <= 0:
+        return torch.cat([a, b], dim=1)
+    out = a.new_zeros(a.size(0), a.size(1) + b.size(1) - n)
+    out[:, : a.size(1)] = a
+    gain = torch.ones(b.size(1), device=b.device)
+    gain[:n] = torch.linspace(0, 1, n, device=b.device).sqrt()
+    out[:, a.size(1) - n:] += b * gain
+    return out
 
 
 # --- MIDI token introspection ------------------------------------------------

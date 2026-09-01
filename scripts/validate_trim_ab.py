@@ -32,7 +32,9 @@ from stable_audio_tools.data.dataset import midi_to_tokens
 from stable_audio_tools.data.event_codec import Codec
 from stable_audio_tools.inference.generation import generate_diffusion_cond
 from stable_audio_tools.inference.postprocess import (
-    crossfade_audio,
+    apply_fade_out,
+    join_segments,
+    leading_silence,
     frame_rms_db,
     segment_seconds_total,
     token_stats,
@@ -165,10 +167,15 @@ def main():
               f"cond={seconds_total:5.1f}s fixed={diag['end_time']:6.2f}s "
               f"legacy={legacy_len:6.2f}s snr={snr} dB att={attempts}", flush=True)
 
-        fixed_audio = segment if fixed_audio is None else crossfade_audio(
-            fixed_audio, segment, 0.05, sample_rate)
+        overlap = leading_silence(
+            segment, sample_rate,
+            None if diag.get("music_db") is None else diag["music_db"] - 30.0)
+        records[-1]["overlap"] = overlap
+        fixed_audio = segment if fixed_audio is None else join_segments(
+            fixed_audio, segment, sample_rate, overlap)
 
     def save(audio, name):
+        audio = apply_fade_out(audio, sample_rate, fade_ms=30.0)
         scale = torch.max(torch.abs(audio)).clamp(min=1e-6)
         audio = (audio / scale).clamp(-1, 1) * 0.95
         path = os.path.join(args.outdir, name)

@@ -12,7 +12,9 @@ from stable_audio_tools.data.dataset import midi_to_tokens
 from stable_audio_tools.data.midi_utils import save_midi_and_wav
 from stable_audio_tools.data.event_codec import Codec
 from stable_audio_tools.inference.postprocess import (
-    crossfade_audio,
+    apply_fade_out,
+    join_segments,
+    leading_silence,
     segment_seconds_total,
     token_stats,
     trim_to_music,
@@ -47,7 +49,7 @@ def render_segment(model, condition, steps, cfg_scale, sigma_min, sigma_max):
 
 def process_midi(midi_file, model, codec, sample_rate, output_file, midi_length, prompt,
                  steps=100, cfg_scale=6.0, sigma_min=0.03, sigma_max=500,
-                 max_retries=3, fade_duration=0.05, peak=0.95, diagnostics_file=None):
+                 max_retries=3, peak=0.95, diagnostics_file=None):
     """Render a full MIDI file segment by segment.
 
     Each segment is generated into a fixed 47.55 s canvas of which only the
@@ -92,6 +94,7 @@ def process_midi(midi_file, model, codec, sample_rate, output_file, midi_length,
                   "hard_cut": hard_cut, **stats, **diag}
         records.append(record)
 
+
         if segment is None:
             failures.append(i)
             print(f"[seg {i:4d}/{n_segments}] FAILED after {max_retries} attempts, skipping",
@@ -106,14 +109,22 @@ def process_midi(midi_file, model, codec, sample_rate, output_file, midi_length,
               f"snr={diag['snr_db'] if diag['snr_db'] is None else round(diag['snr_db'], 1)} dB "
               f"attempts={attempts}", flush=True)
 
-        final_audio = segment if final_audio is None else crossfade_audio(
-            final_audio, segment, fade_duration=fade_duration, sample_rate=sample_rate)
+        # slide this segment back over the previous one's decay by exactly its
+        # own leading silence, so a silent head does not become a hole
+        overlap = leading_silence(
+            segment, sample_rate,
+            None if diag.get("music_db") is None else diag["music_db"] - 30.0)
+        record["overlap"] = overlap
+        final_audio = segment if final_audio is None else join_segments(
+            final_audio, segment, sample_rate, overlap)
 
     if final_audio is None:
         raise RuntimeError("every segment failed, nothing to write")
 
     # One gain for the whole track: per-segment peak normalisation is what made
-    # loudness jump between chunks.
+    # loudness jump between chunks. Only the very end needs a fade; the
+    # junctions are already handled by join_segments.
+    final_audio = apply_fade_out(final_audio, sample_rate, fade_ms=30.0)
     scale = torch.max(torch.abs(final_audio)).clamp(min=1e-6)
     final_audio = (final_audio / scale).clamp(-1, 1) * peak
 
