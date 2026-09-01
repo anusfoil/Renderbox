@@ -15,9 +15,10 @@ from stable_audio_tools.inference.postprocess import (
     apply_fade_out,
     join_segments,
     leading_silence,
+    normalize,
+    render_until_valid,
     segment_seconds_total,
     token_stats,
-    trim_to_music,
 )
 
 
@@ -79,21 +80,18 @@ def process_midi(midi_file, model, codec, sample_rate, output_file, midi_length,
             "midi": token,
         }
 
-        segment, diag, attempts = None, None, 0
-        for attempt in range(max_retries):
-            attempts = attempt + 1
-            canvas = render_segment(model, condition, steps, cfg_scale, sigma_min, sigma_max)
-            segment, diag = trim_to_music(canvas, sample_rate, seconds_total,
-                                          hard_cut=hard_cut)
-            if segment is not None:
-                break
-            print(f"[seg {i:4d}/{n_segments}] REJECTED ({diag['reason']}), "
-                  f"resampling {attempt + 1}/{max_retries}", flush=True)
+        segment, diag = render_until_valid(
+            lambda attempt: render_segment(model, condition, steps, cfg_scale,
+                                           sigma_min, sigma_max),
+            sample_rate, seconds_total, max_retries=max_retries, hard_cut=hard_cut,
+            on_reject=lambda a, d: print(
+                f"[seg {i:4d}/{n_segments}] REJECTED ({d['reason']}), "
+                f"resampling {a + 1}/{max_retries}", flush=True))
+        attempts = diag["attempts"]
 
-        record = {"segment": i, "seconds_total": seconds_total, "attempts": attempts,
+        record = {"segment": i, "seconds_total": seconds_total,
                   "hard_cut": hard_cut, **stats, **diag}
         records.append(record)
-
 
         if segment is None:
             failures.append(i)
@@ -124,9 +122,7 @@ def process_midi(midi_file, model, codec, sample_rate, output_file, midi_length,
     # One gain for the whole track: per-segment peak normalisation is what made
     # loudness jump between chunks. Only the very end needs a fade; the
     # junctions are already handled by join_segments.
-    final_audio = apply_fade_out(final_audio, sample_rate, fade_ms=30.0)
-    scale = torch.max(torch.abs(final_audio)).clamp(min=1e-6)
-    final_audio = (final_audio / scale).clamp(-1, 1) * peak
+    final_audio = normalize(apply_fade_out(final_audio, sample_rate, fade_ms=30.0), peak)
 
     torchaudio.save(output_file, final_audio.mul(32767).to(torch.int16).cpu(), sample_rate)
 

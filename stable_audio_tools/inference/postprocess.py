@@ -204,6 +204,35 @@ def crossfade_audio(audio1: torch.Tensor, audio2: torch.Tensor,
     return torch.cat([audio1[:, :-n], crossfaded, audio2[:, n:]], dim=1)
 
 
+def render_until_valid(draw, sample_rate: int, seconds_total: float,
+                       max_retries: int = 3, hard_cut: bool = False,
+                       on_reject=None, **kwargs):
+    """Draw from the model until ``trim_to_music`` accepts the result.
+
+    ``draw(attempt)`` must return a raw (channels, samples) canvas and should
+    vary its seed with ``attempt``. Returns ``(segment, diag)`` with
+    ``segment=None`` if every attempt was degenerate; ``diag["attempts"]``
+    records how many draws were made.
+    """
+    segment = diag = None
+    for attempt in range(max_retries):
+        canvas = draw(attempt)
+        segment, diag = trim_to_music(canvas, sample_rate, seconds_total,
+                                      hard_cut=hard_cut, **kwargs)
+        diag["attempts"] = attempt + 1
+        if segment is not None:
+            return segment, diag
+        if on_reject is not None:
+            on_reject(attempt, diag)
+    return None, diag
+
+
+def normalize(audio: torch.Tensor, peak: float = 0.95) -> torch.Tensor:
+    """Scale to a target peak. Apply once per finished file, never per segment."""
+    scale = torch.max(torch.abs(audio)).clamp(min=1e-6)
+    return (audio / scale).clamp(-1, 1) * peak
+
+
 def leading_silence(audio: torch.Tensor, sample_rate: int,
                     thresh_db: tp.Optional[float] = None,
                     below_music_db: float = 30.0,

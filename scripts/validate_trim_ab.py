@@ -35,6 +35,7 @@ from stable_audio_tools.inference.postprocess import (
     apply_fade_out,
     join_segments,
     leading_silence,
+    normalize,
     frame_rms_db,
     segment_seconds_total,
     token_stats,
@@ -175,9 +176,7 @@ def main():
             fixed_audio, segment, sample_rate, overlap)
 
     def save(audio, name):
-        audio = apply_fade_out(audio, sample_rate, fade_ms=30.0)
-        scale = torch.max(torch.abs(audio)).clamp(min=1e-6)
-        audio = (audio / scale).clamp(-1, 1) * 0.95
+        audio = normalize(apply_fade_out(audio, sample_rate, fade_ms=30.0))
         path = os.path.join(args.outdir, name)
         torchaudio.save(path, audio.mul(32767).to(torch.int16).cpu(), sample_rate)
         print(f"=== wrote {path}  {audio.size(1) / sample_rate / 60:.2f} min")

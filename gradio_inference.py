@@ -9,6 +9,7 @@ from stable_audio_tools.inference.generation import generate_diffusion_cond
 from stable_audio_tools.models.pretrained import load_local_trained_model
 from stable_audio_tools.data.midi_utils import tokens_to_notes, note_sequence_to_midi_file
 from stable_audio_tools.data.event_codec import Codec
+from stable_audio_tools.inference.postprocess import normalize, render_until_valid
 from stable_audio_tools.data.dataset import midi_to_tokens
 import parangonar as pa
 import hook
@@ -66,24 +67,33 @@ def generate_audio(model, prompt, seconds_total, midi_tokens, output_folder="gra
         "midi": midi_tokens
     }
 
-    # Generate audio
-    output = generate_diffusion_cond(
-        model,
-        steps=100,
-        cfg_scale=7,
-        conditioning=[condition],
-        sample_size=sample_size,
-        sigma_min=0.3,
-        sigma_max=500,
-        sampler_type="dpmpp-3m-sde",
-        device=device
-    )
+    # Generate audio. Only the first seconds_total of the 47.55s canvas carry
+    # music; the rest is the zero-padding the model was trained against and has
+    # to be trimmed off. A draw that collapsed to the silence mode is redrawn.
+    def draw(attempt):
+        out = generate_diffusion_cond(
+            model,
+            steps=100,
+            cfg_scale=6,
+            conditioning=[condition],
+            sample_size=sample_size,
+            sigma_min=0.03,
+            sigma_max=500,
+            sampler_type="dpmpp-3m-sde",
+            device=device,
+            seed=-1 if attempt == 0 else torch.randint(0, 2 ** 31 - 1, (1,)).item(),
+        )
+        return rearrange(out, "b d n -> d (b n)").to(torch.float32)
 
-    # Process and save audio
-    output = rearrange(output, "b d n -> d (b n)")
-    output = output.to(torch.float32).div(torch.max(torch.abs(output))).clamp(-1, 1).mul(32767).to(torch.int16).cpu()
+    output, diag = render_until_valid(
+        draw, sample_rate, seconds_total,
+        on_reject=lambda a, d: print(f"rejected draw {a + 1}: {d['reason']}"))
+    if output is None:
+        raise gr.Error(f"generation failed after 3 attempts: {diag['reason']}")
+
+    output = normalize(output)
     audio_file = os.path.join(output_folder, "output.wav")
-    torchaudio.save(audio_file, output, sample_rate)
+    torchaudio.save(audio_file, output.mul(32767).to(torch.int16).cpu(), sample_rate)
 
     return audio_file
 

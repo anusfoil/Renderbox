@@ -10,6 +10,7 @@ from stable_audio_tools.models.pretrained import get_pretrained_model, load_loca
 from stable_audio_tools.data.dataset import create_dataloader_from_config
 from stable_audio_tools.data.midi_utils import save_midi_and_wav
 from stable_audio_tools.data.event_codec import Codec
+from stable_audio_tools.inference.postprocess import normalize, render_until_valid
 
 import hook
 
@@ -107,28 +108,36 @@ for i, data in enumerate(dataloader):
         }
 
         
-        # Generate stereo audio
-        output = generate_diffusion_cond(
-            model,
-            steps=100,
-            cfg_scale=7,
-            conditioning=[condition],
-            sample_size=sample_size,
-            sigma_min=0.3,
-            sigma_max=500,
-            sampler_type="dpmpp-3m-sde",
-            device=device,
-            save_path=output_folder,
-            seed=13137013
-        )
-        
-        # Rearrange audio batch to a single sequence
-        output = rearrange(output, "b d n -> d (b n)")
-        
-        # Peak normalize, clip, convert to int16, and save to file
-        output = output.to(torch.float32).div(torch.max(torch.abs(output))).clamp(-1, 1).mul(32767).to(torch.int16).cpu()
+        # Generate stereo audio. The model always fills the full 47.55s canvas
+        # and only the first seconds_total carry music, so the rest has to be
+        # trimmed; a draw that collapsed to the silence mode is redrawn with a
+        # new seed rather than written out.
+        def draw(attempt, condition=condition, output_folder=output_folder):
+            out = generate_diffusion_cond(
+                model,
+                steps=100,
+                cfg_scale=6,
+                conditioning=[condition],
+                sample_size=sample_size,
+                sigma_min=0.03,
+                sigma_max=500,
+                sampler_type="dpmpp-3m-sde",
+                device=device,
+                save_path=output_folder,
+                seed=13137013 + attempt,
+            )
+            return rearrange(out, "b d n -> d (b n)").to(torch.float32)
+
+        output, diag = render_until_valid(
+            draw, sample_rate, condition["seconds_total"],
+            on_reject=lambda a, d: print(f"  rejected draw {a + 1}: {d['reason']}"))
+        if output is None:
+            print(f"  SKIPPED example {i} / {performer}: {diag['reason']}")
+            continue
+
+        output = normalize(output)
         audio_file = os.path.join(output_folder, "output.wav")
-        torchaudio.save(audio_file, output, sample_rate)
+        torchaudio.save(audio_file, output.mul(32767).to(torch.int16).cpu(), sample_rate)
         
         # Save prompt to text file
         prompt_file = os.path.join(output_folder, "prompt.txt")
@@ -160,25 +169,3 @@ for i, data in enumerate(dataloader):
         print(f"Processed and saved output for example {i} at {output_folder}")
 
 hook()
-
-
-
-# Generate stereo audio
-output = generate_diffusion_cond(
-    model,
-    steps=100,
-    cfg_scale=7,
-    conditioning=conditioning,
-    sample_size=sample_size,
-    sigma_min=0.3,
-    sigma_max=500,
-    sampler_type="dpmpp-3m-sde",
-    device=device
-)
-
-# Rearrange audio batch to a single sequence
-output = rearrange(output, "b d n -> d (b n)")
-
-# Peak normalize, clip, convert to int16, and save to file
-output = output.to(torch.float32).div(torch.max(torch.abs(output))).clamp(-1, 1).mul(32767).to(torch.int16).cpu()
-torchaudio.save("output.wav", output, sample_rate)
