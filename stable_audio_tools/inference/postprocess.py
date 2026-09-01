@@ -41,6 +41,7 @@ def find_music_end(
     hop_ms: float = 20.0,
     snr_min_db: float = 12.0,
     rel_db: float = 6.0,
+    below_music_db: float = 30.0,
     floor_window: float = 5.0,
     search_back: float = 1.5,
     search_fwd: float = 2.5,
@@ -97,7 +98,11 @@ def find_music_end(
         return diag
 
     # Search for the boundary only near where the timing condition says it is.
-    thresh_db = max(floor_db + rel_db, music_db - 45.0)
+    # The threshold is musical, not floor-relative: a tail sitting 30 dB under
+    # the passage is inaudible once the next segment enters, and keeping it
+    # (the floor is another 40 dB down) pastes up to half a second of near
+    # silence onto the end of every segment.
+    thresh_db = max(floor_db + rel_db, music_db - below_music_db)
     diag["thresh_db"] = thresh_db
     lo = frame_of(seconds_total - search_back)
     hi = min(frame_of(seconds_total + search_fwd), n_frames)
