@@ -12,7 +12,6 @@ from stable_audio_tools.data.event_codec import Codec
 from stable_audio_tools.inference.postprocess import normalize, render_until_valid
 from stable_audio_tools.data.dataset import midi_to_tokens
 import parangonar as pa
-import hook
 
 # Model and device setup
 device = "cuda" if torch.cuda.is_available() else "cpu"

@@ -1,3 +1,13 @@
+"""Batch demo generation over a dataloader split (used for the paper's per-performer samples).
+
+This is a development script, not a user-facing entry point: it needs a dataset config
+pointing at locally available audio (the default is ``atepp.json``, which is not part of
+the public release) and a trainer checkpoint path that you set below. For rendering your
+own MIDI, use ``full_midi_by_segments.py`` or ``gradio_inference.py`` from the repo root.
+
+Run it from the repo root so the relative config paths resolve.
+"""
+
 import os, json, random
 import torch
 import torchaudio
@@ -12,7 +22,11 @@ from stable_audio_tools.data.midi_utils import save_midi_and_wav
 from stable_audio_tools.data.event_codec import Codec
 from stable_audio_tools.inference.postprocess import normalize, render_until_valid
 
-import hook
+try:
+    import hook
+except ImportError:  # hook is a local debugging helper, not a published package
+    def hook(*args, **kwargs):
+        pass
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
 stage = "0"

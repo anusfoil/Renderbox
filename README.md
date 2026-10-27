@@ -9,17 +9,11 @@ To run the training scripts or inference code, you'll want to clone this reposit
 ```bash
 $ pip install .
 ```
-Python 3.10 with torch 2.4.1 (cu124) is a known-good combination. Several pins in ```setup.py``` are inherited from upstream and need overriding, and a few runtime dependencies are not declared there:
-```bash
-$ pip install -U wandb
-$ pip install "setuptools==65.5.0" "transformers==4.44.2" "huggingface_hub==0.24.6" \
-              "ema-pytorch>=0.4" "soundfile>=0.12.1"
-$ pip install note_seq partitura parangonar fastdtw mido pretty_midi
-```
+Install into a fresh environment, since several dependencies are version-sensitive and the install will move them. Python 3.10 with torch 2.4.1 (cu124) is the combination these instructions were verified against; install torch first if you need a specific CUDA build.
 
 This project is developed upon codebase of [stable-audio-tools](https://github.com/Stability-AI/stable-audio-tools).
 
-The controlnet experiment is documented in the ```main_controlnet/``` directory, which is adapted from [stable-audio-controlnet](https://github.com/EmilianPostolache/stable-audio-controlnet).
+The controlnet experiment reported in the paper is adapted from [stable-audio-controlnet](https://github.com/EmilianPostolache/stable-audio-controlnet) and is kept in a separate repository, which is not part of this release.
 
 # Inference 
 
