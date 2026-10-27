@@ -14,7 +14,6 @@ import webdataset as wds
 import note_seq
 import pandas as pd
 
-from aeiou.core import is_silence
 from os import path
 from pedalboard.io import AudioFile
 from torchaudio import transforms as T

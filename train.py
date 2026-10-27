@@ -12,7 +12,6 @@ from stable_audio_tools.models.utils import load_ckpt_state_dict, remove_weight_
 from stable_audio_tools.training import create_training_wrapper_from_config, create_demo_callback_from_config
 from stable_audio_tools.training.utils import copy_state_dict
 
-import hook
 
 class ExceptionCallback(pl.Callback):
     def on_exception(self, trainer, module, err):
